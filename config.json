@@ -1,32 +1,40 @@
 {
-    "name": "Axpert Inverter",
-    "version": "0.5.1",
-    "slug": "axpert",
-    "description": "Monitors an axpert inverter",
-    "arch": ["amd64", "armv7"],
-    "startup": "application",
-    "boot": "auto",
-    "init": false,
-    "privileged": ["SYS_RAWIO"],
-    "devices": ["/dev/hidraw0"],
-    "options": {
-        "mqtt_server": "core-mosquitto",
-        "mqtt_user": "mqtt",
-        "mqtt_pass": "mqtt",
-        "mqtt_client_id": "axpert",
-        "mqtt_topic_parallel": "power/axpert",
-        "mqtt_topic_settings": "power/axpert_settings",
-        "mqtt_topic": "power/axpert{sn}",
-        "device": "/dev/hidraw0"
-    },
-    "schema": {
-        "mqtt_server": "str",
-        "mqtt_user": "str",
-        "mqtt_pass": "str",
-        "mqtt_client_id": "str",
-        "mqtt_topic_parallel": "str",
-        "mqtt_topic_settings": "str",
-        "mqtt_topic": "str",
-        "device": "str"
-    }
-}
+  "name": "Axpert Inverter (HID)",
+  "version": "0.5.1",
+  "slug": "axpert_hid",
+  "description": "Monitors an axpert inverter with HID support",
+  "arch": ["amd64", "armv7"],
+  "startup": "application",
+  "boot": "auto",
+  "init": false,
+
+  "privileged": ["SYS_RAWIO"],
+
+  "devices": [
+    "/dev/hidraw1:/dev/hidraw1:rwm"
+  ],
+
+  "options": {
+    "mqtt_server": "192.168.1.86",
+    "mqtt_user": "mqtt-voltronic",
+    "mqtt_pass": "89342107dD",
+    "mqtt_client_id": "axpert-ha",
+    "mqtt_topic_parallel": "power/axpert",
+    "mqtt_topic_settings": "power/axpert_settings",
+    "mqtt_topic": "power/axpert{sn}",
+    "device": "/dev/hidraw1",
+    "protocol": "PI41",
+    "poll_interval": "2"
+  },
+
+  "schema": {
+    "mqtt_server": "str",
+    "mqtt_user": "str",
+    "mqtt_pass": "str",
+    "mqtt_client_id": "str",
+    "mqtt_topic_parallel": "str",
+    "mqtt_topic_settings": "str",
+    "mqtt_topic": "str",
+    "device": "str",
+    "poll_interval": "str"
+  }

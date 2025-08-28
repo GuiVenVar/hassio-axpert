@@ -10,8 +10,9 @@
 
   "privileged": ["SYS_RAWIO"],
 
-  "devices": [
-    "/dev/hidraw1:/dev/hidraw1:rwm"
+  "devices": [      
+    "/dev/hidraw0:/dev/hidraw0:rwm",
+    "/dev/hidraw1:/dev/hidraw1:rwm"  
   ],
 
   "options": {
@@ -22,7 +23,7 @@
     "mqtt_topic_parallel": "power/axpert",
     "mqtt_topic_settings": "power/axpert_settings",
     "mqtt_topic": "power/axpert{sn}",
-    "device": "/dev/hidraw1",
+    "device": "/dev/hidraw0",
     "protocol": "str",
     "poll_interval": "2"
   },

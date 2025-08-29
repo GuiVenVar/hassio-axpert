@@ -23,8 +23,7 @@
     "mqtt_topic_parallel": "power/axpert",
     "mqtt_topic_settings": "power/axpert_settings",
     "mqtt_topic": "power/axpert{sn}",
-    "device": "/dev/hidraw0",
-    "protocol": "str",
+    "device": "/dev/hidraw1",
     "poll_interval": "2"
   },
 

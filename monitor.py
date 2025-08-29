@@ -179,7 +179,6 @@ def get_settings():
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIGS')
-        get_settings: INIT Serial Command: QPIRI')
         response = serial_command('QPIRI')
         nums = response.split(' ')
         if len(nums) < 21:

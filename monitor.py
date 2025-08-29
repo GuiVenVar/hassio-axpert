@@ -91,6 +91,7 @@ def serial_command(command):
 def get_parallel_data():
     #collect data from axpert inverter
     try:
+        print('[LOG] [monitory.py] - get_parallel_dat: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
         nums = response.split(' ')
@@ -101,30 +102,30 @@ def get_parallel_data():
             data += '"Gridmode":1'
         else:
             data += '"Gridmode":0'
-        data += ',"SerialNumber": ' + str(int(nums[1]))
-        data += ',"BatteryChargingCurrent": ' + str(int(nums[12]))
-        data += ',"BatteryDischargeCurrent": ' + str(int(nums[26]))
-        data += ',"TotalChargingCurrent": ' + str(int(nums[15]))
-        data += ',"GridVoltage": ' + str(float(nums[4]))
-        data += ',"GridFrequency": ' + str(float(nums[5]))
-        data += ',"OutputVoltage": ' + str(float(nums[6]))
-        data += ',"OutputFrequency": ' + str(float(nums[7]))
-        data += ',"OutputAparentPower": ' + str(int(nums[8]))
-        data += ',"OutputActivePower": ' + str(int(nums[9]))
-        data += ',"LoadPercentage": ' + str(int(nums[10]))
-        data += ',"BatteryVoltage": ' + str(float(nums[11]))
-        data += ',"BatteryCapacity": ' + str(float(nums[13]))
-        data += ',"PvInputVoltage": ' + str(float(nums[14]))
-        data += ',"TotalAcOutputApparentPower": ' + str(int(nums[16]))
-        data += ',"TotalAcOutputActivePower": ' + str(int(nums[17]))
-        data += ',"TotalAcOutputPercentage": ' + str(int(nums[18]))
+        data += ',"SerialNumber": ' + nums[1] + '"'
+        data += ',"BatteryChargingCurrent": ' + nums[12] + '"'
+        data += ',"BatteryDischargeCurrent": ' + nums[26] + '"'
+        data += ',"TotalChargingCurrent": ' +  nums[15] + '"'
+        data += ',"GridVoltage": ' +  nums[4] + '"'
+        data += ',"GridFrequency": ' +  nums[5] + '"'
+        data += ',"OutputVoltage": ' +  nums[6] + '"'
+        data += ',"OutputFrequency": ' +  nums[7] + '"'
+        data += ',"OutputAparentPower": ' +  nums[8] + '"'
+        data += ',"OutputActivePower": ' +  nums[9] + '"'
+        data += ',"LoadPercentage": ' +  nums[10] + '"'
+        data += ',"BatteryVoltage": ' +  nums[11] + '"'
+        data += ',"BatteryCapacity": ' +  nums[13] + '"'
+        data += ',"PvInputVoltage": ' +  nums[14] + '"'
+        data += ',"TotalAcOutputApparentPower": ' + nums[16] + '"'
+        data += ',"TotalAcOutputActivePower": ' + nums[17] + '"'
+        data += ',"TotalAcOutputPercentage": ' + nums[18] + '"'
         # data += ',"InverterStatus": ' + nums[19]
-        data += ',"OutputMode": ' + str(int(nums[20]))
-        data += ',"ChargerSourcePriority": ' + str(int(nums[21]))
-        data += ',"MaxChargeCurrent": ' + str(int(nums[22]))
-        data += ',"MaxChargerRange": ' + str(int(nums[23]))
-        data += ',"MaxAcChargerCurrent": ' + str(int(nums[24]))
-        data += ',"PvInputCurrentForBattery": ' + str(int(nums[25]))
+        data += ',"OutputMode": ' +  nums[20]  + '"'
+        data += ',"ChargerSourcePriority": ' +  nums[21]  + '"'
+        data += ',"MaxChargeCurrent": ' +  nums[22]  + '"'
+        data += ',"MaxChargerRange": ' +  nums[23]  + '"'
+        data += ',"MaxAcChargerCurrent": ' +  nums[24]  + '"'
+        data += ',"PvInputCurrentForBattery": ' +  nums[25]  + '"'
         if nums[2] == 'B':
             data += ',"Solarmode":1'
         else:
@@ -139,6 +140,8 @@ def get_parallel_data():
 def get_data():
     #collect data from axpert inverter
     try:
+        
+        print('[LOG] [monitory.py] - get_data: INIT Serial Command: QPIGS')
         response = serial_command('QPIGS')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -146,14 +149,14 @@ def get_data():
 
         data = '{'
 
-        data += '"BusVoltage":' + str(float(nums[7]))
-        data += ',"InverterHeatsinkTemperature":' + str(float(nums[11]))
-        data += ',"BatteryVoltageFromScc":' + str(float(nums[14]))
-        data += ',"PvInputCurrent":' + str(int(nums[12]))
-        data += ',"PvInputVoltage":' + str(float(nums[13]))
-        data += ',"PvInputPower":' + str(int(nums[19]))
-        data += ',"BatteryChargingCurrent": ' + str(int(nums[9]))
-        data += ',"BatteryDischargeCurrent":' + str(int(nums[15]))
+        data += '"BusVoltage":' +  nums[7] + '"'
+        data += ',"InverterHeatsinkTemperature":' +  nums[11] + '"'
+        data += ',"BatteryVoltageFromScc":' +  nums[14] + '"'
+        data += ',"PvInputCurrent":' +  nums[12] + '"'
+        data += ',"PvInputVoltage":' +  nums[13] + '"'
+        data += ',"PvInputPower":' +  nums[19] + '"'
+        data += ',"BatteryChargingCurrent": ' +  nums[9] + '"'
+        data += ',"BatteryDischargeCurrent":' +  nums[15] + '"'
         data += ',"DeviceStatus":"' + nums[16] + '"'
 
         data += '}'
@@ -165,6 +168,8 @@ def get_data():
 def get_settings():
     #collect data from axpert inverter
     try:
+        
+        print('[LOG] [monitory.py] - get_settings: INIT Serial Command: QPIRI')
         response = serial_command('QPIRI')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -172,32 +177,32 @@ def get_settings():
 
         data = '{'
 
-        data += '"AcInputVoltage":' + str(float(nums[0]))
-        data += ',"AcInputCurrent":' + str(float(nums[1]))
-        data += ',"AcOutputVoltage":' + str(float(nums[2]))
-        data += ',"AcOutputFrequency":' + str(float(nums[3]))
-        data += ',"AcOutputCurrent":' + str(float(nums[4]))
-        data += ',"AcOutputApparentPower":' + str(int(nums[5]))
-        data += ',"AcOutputActivePower":' + str(int(nums[6]))
-        data += ',"BatteryVoltage":' + str(float(nums[7]))
-        data += ',"BatteryRechargeVoltage":' + str(float(nums[8]))
-        data += ',"BatteryUnderVoltage":' + str(float(nums[9]))
-        data += ',"BatteryBulkVoltage":' + str(float(nums[10]))
-        data += ',"BatteryFloatVoltage":' + str(float(nums[11]))
+        data += '"AcInputVoltage":' +  nums[0] + '"'
+        data += ',"AcInputCurrent":' +  nums[1] + '"'
+        data += ',"AcOutputVoltage":' +  nums[2] + '"'
+        data += ',"AcOutputFrequency":' +  nums[3] + '"'
+        data += ',"AcOutputCurrent":' +  nums[4] + '"'
+        data += ',"AcOutputApparentPower":' +  nums[5] + '"'
+        data += ',"AcOutputActivePower":' +  nums[6] + '"'
+        data += ',"BatteryVoltage":' +  nums[7] + '"'
+        data += ',"BatteryRechargeVoltage":' +  nums[8] + '"'
+        data += ',"BatteryUnderVoltage":' +  nums[9] + '"'
+        data += ',"BatteryBulkVoltage":' +  nums[10] + '"'
+        data += ',"BatteryFloatVoltage":' +  nums[11] + '"'
         data += ',"BatteryType":"' + battery_types[nums[12]] + '"'
-        data += ',"MaxAcChargingCurrent":' + str(int(nums[13]))
-        data += ',"MaxChargingCurrent":' + str(int(nums[14]))
+        data += ',"MaxAcChargingCurrent":' +  nums[13] + '"'
+        data += ',"MaxChargingCurrent":' +  nums[14] + '"'
         data += ',"InputVoltageRange":"' + voltage_ranges[nums[15]] + '"'
         data += ',"OutputSourcePriority":"' + output_sources[nums[16]] + '"'
         data += ',"ChargerSourcePriority":"' + charger_sources[nums[17]] + '"'
-        data += ',"MaxParallelUnits":' + str(int(nums[18]))
+        data += ',"MaxParallelUnits":' +  nums[18] + '"'
         data += ',"MachineType":"' + machine_types[nums[19]] + '"'
         data += ',"Topology":"' + topologies[nums[20]] + '"'
         data += ',"OutputMode":"' + output_modes[nums[21]] + '"'
-        data += ',"BatteryRedischargeVoltage":' + str(float(nums[22]))
+        data += ',"BatteryRedischargeVoltage":' +  nums[22] + '"'
         data += ',"PvOkCondition":"' + pv_ok_conditions[nums[23]] + '"'
         data += ',"PvPowerBalance":"' + pv_power_balance[nums[24]] + '"'
-        data += ',"MaxBatteryCvChargingTime":' + str(int(nums[25]))
+        data += ',"MaxBatteryCvChargingTime":' +  nums[25] + '"'
         
         data += '}'
         return data

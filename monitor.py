@@ -93,6 +93,8 @@ def serial_command(command):
         time.sleep(0.1)
         connect()
         return serial_command(command)
+    
+     print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
 
 def get_parallel_data():
     #collect data from axpert inverter
@@ -106,9 +108,9 @@ def get_parallel_data():
             return ''
 
         if nums[2] == 'L':
-            data += '"Gridmode":1'
+            data += '"Gridmode":1' 
         else:
-            data += '"Gridmode":0'
+            data += '"Gridmode":0'            
         data += ',"SerialNumber": ' + str(safe_number(nums[1]))
         data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
         data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[26]))
@@ -142,7 +144,13 @@ def get_parallel_data():
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: ' + str(e))
+
+        print('\n ** Response **')        
+        print(response)
+        print('\n ** END Response **')
         return ''
+
+    print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_parallel_dat ]: END \n\n')
     return data
 
 def get_data():
@@ -168,6 +176,8 @@ def get_data():
         data += ',"DeviceStatus":"' + nums[16] + '"'
 
         data += '}'
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_data ]: END \n\n')
+
         return data
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -214,6 +224,8 @@ def get_settings():
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25]))
         
         data += '}'
+
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_settings ]: END \n\n')
         return data
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -20,7 +20,7 @@ from binascii import unhexlify
 import paho.mqtt.client as mqtt
 from random import randint
 
-battery_types = {0: 'AGM', 1: 'Flooded', 2: 'User', 3: 'Lithium' }
+battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium' }
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
 charger_sources = {'0': 'utility first', '1': 'solar first', '2': 'solar + utility', '3': 'solar only'}
@@ -195,7 +195,6 @@ def get_settings():
             return ''
 
         data = '{'
-
         data += '"AcInputVoltage":' + str(safe_number(nums[0]))
         data += ',"AcInputCurrent":' + str(safe_number(nums[1]))
         data += ',"AcOutputVoltage":' + str(safe_number(nums[2]))
@@ -208,20 +207,21 @@ def get_settings():
         data += ',"BatteryUnderVoltage":' + str(safe_number(nums[9]))
         data += ',"BatteryBulkVoltage":' + str(safe_number(nums[10]))
         data += ',"BatteryFloatVoltage":' + str(safe_number(nums[11]))
-        data += ',"BatteryType":"' + battery_types[safe_number(nums[12])] + '"'
+        data += ',"BatteryType":"' + map_with_log(battery_types, nums[12], "BatteryType") + '"'
         data += ',"MaxAcChargingCurrent":' + str(safe_number(nums[13]))
         data += ',"MaxChargingCurrent":' + str(safe_number(nums[14]))
-        data += ',"InputVoltageRange":"' + voltage_ranges[safe_number(nums[15])] + '"'
-        data += ',"OutputSourcePriority":"' + output_sources[safe_number(nums[16])] + '"'
-        data += ',"ChargerSourcePriority":"' + charger_sources[safe_number(nums[17])] + '"'
+        data += ',"InputVoltageRange":"' + map_with_log(voltage_ranges, nums[15], "InputVoltageRange") + '"'
+        data += ',"OutputSourcePriority":"' + map_with_log(output_sources, nums[16], "OutputSourcePriority") + '"'
+        data += ',"ChargerSourcePriority":"' + map_with_log(charger_sources, nums[17], "ChargerSourcePriority") + '"'
         data += ',"MaxParallelUnits":' + str(safe_number(nums[18]))
-        data += ',"MachineType":"' + machine_types[safe_number(nums[19])] + '"'
-        data += ',"Topology":"' + topologies[safe_number(nums[20])] + '"'
-        data += ',"OutputMode":"' + output_modes[safe_number(nums[21])] + '"'
+        data += ',"MachineType":"' + map_with_log(machine_types, nums[19], "MachineType") + '"'
+        data += ',"Topology":"' + map_with_log(topologies, nums[20], "Topology") + '"'
+        data += ',"OutputMode":"' + map_with_log(output_modes, nums[21], "OutputMode") + '"'
         data += ',"BatteryRedischargeVoltage":' + str(safe_number(nums[22]))
-        data += ',"PvOkCondition":"' + pv_ok_conditions[safe_number(nums[23])] + '"'
-        data += ',"PvPowerBalance":"' + pv_power_balance[safe_number(nums[24])] + '"'
+        data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
+        data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25]))
+
         
         data += '}'
 
@@ -231,6 +231,14 @@ def get_settings():
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ get_settings ] - Error parsing inverter data...: ' + str(e))
         return ''
+
+def map_with_log(table: dict, value: str, label: str) -> str:
+    if value in table:
+        return table[value]
+    else:
+        # Aquí logeas el fallo con claridad
+        print(f"[get_settings] Valor inesperado en {label}: {value} (claves válidas: {list(table.keys())})")
+        return f"{label}_invalid({value})"
 
 def send_data(data, topic):
     try:

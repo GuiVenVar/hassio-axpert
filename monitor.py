@@ -85,6 +85,8 @@ def serial_command(command):
         response = response[1:lastI-2]
 
         file.close()
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
+
         return response
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -94,8 +96,6 @@ def serial_command(command):
         connect()
         return serial_command(command)
     
-     print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
-
 def get_parallel_data():
     #collect data from axpert inverter
     try:

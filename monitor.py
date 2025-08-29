@@ -1,7 +1,5 @@
 #! /usr/bin/python
-
 # Axpert Inverter control script
-
 # Read values from inverter, sends values to mqtt,
 # calculation of CRC is done by XMODEM
 
@@ -20,6 +18,7 @@ from binascii import unhexlify
 import paho.mqtt.client as mqtt
 from random import randint
 
+# ----------------- Tablas de mapeo -----------------
 battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium' }
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
@@ -30,6 +29,28 @@ output_modes = {'0': 'single machine output', '1': 'parallel output', '2': 'Phas
 pv_ok_conditions = {'0': 'As long as one unit of inverters has connect PV, parallel system will consider PV OK', '1': 'Only All of inverters have connect PV, parallel system will consider PV OK'}
 pv_power_balance = {'0': 'PV input max current will be the max charged current', '1': 'PV input max power will be the sum of the max charged power and loads power'}
 
+# ----------------- Helpers de depuración -----------------
+def dump_tokens(tag: str, resp: str):
+    """Imprime los campos con índice para saber qué es cada cosa (usar temporalmente)."""
+    arr = resp.split(' ')
+    print(f"\n[{tag}] len={len(arr)} raw='{resp}'")
+    for i, t in enumerate(arr):
+        print(f"  {tag}[{i:02d}] = {t}")
+    return arr
+
+def pv_from_nums(nums):
+    """
+    Devuelve (pv_voltage, pv_current) desde un array de QPIGS/QPIGS2.
+    En muchos Axpert:
+      nums[12] = PV input current for battery (A)
+      nums[13] = PV input voltage (V)
+    Ajusta aquí si tu dump muestra otros índices.
+    """
+    pv_i = safe_number(nums[12]) if len(nums) > 12 else 0.0
+    pv_v = safe_number(nums[13]) if len(nums) > 13 else 0.0
+    return pv_v, pv_i
+
+# ----------------- MQTT -----------------
 def connect():
     date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print('\n\n\n['+date+'] - [monitor.py] - [ MQTT Connect ]: INIT')
@@ -39,6 +60,7 @@ def connect():
     client.connect(os.environ['MQTT_SERVER'])
     print(os.environ['DEVICE'])
 
+# ----------------- Serie / HID -----------------
 def serial_command(command):
     print(command)
 
@@ -91,26 +113,31 @@ def serial_command(command):
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ serial_command ] - Error reading inverter...: ' + str(e))
-        file.close()
+        try:
+            file.close()
+        except Exception:
+            pass
         time.sleep(0.1)
         connect()
         return serial_command(command)
-    
+
+# ----------------- Parsers / Publicación -----------------
 def get_parallel_data():
-    #collect data from axpert inverter
+    # collect data from axpert inverter (grupo paralelo)
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('\n\n\n['+date+'] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
+        # dump_tokens('QPGS0', response)  # descomenta si quieres ver índices
         nums = response.split(' ')
         if len(nums) < 27:
             return ''
 
         if nums[2] == 'L':
-            data += '"Gridmode":1' 
+            data += '"Gridmode":1'
         else:
-            data += '"Gridmode":0'            
+            data += '"Gridmode":0'
         data += ',"SerialNumber": ' + str(safe_number(nums[1]))
         data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
         data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[26]))
@@ -139,14 +166,15 @@ def get_parallel_data():
             data += ',"Solarmode":1'
         else:
             data += ',"Solarmode":0'
-
         data += '}'
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: ' + str(e))
-
-        print('\n ** Response **')        
-        print(response)
+        print('\n ** Response **')
+        try:
+            print(response)
+        except Exception:
+            pass
         print('\n ** END Response **')
         return ''
 
@@ -154,17 +182,34 @@ def get_parallel_data():
     return data
 
 def get_data():
-    #collect data from axpert inverter
+    # collect data from axpert inverter (instancia local)
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('\n\n\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS')
         response = serial_command('QPIGS')
         nums = response.split(' ')
+        dump_tokens('QPIGS', response)  # DEBUG: comenta si no lo necesitas
+
         if len(nums) < 21:
             return ''
 
-        data = '{'
+        # Intentar PV2 desde QPIGS2 (si el equipo lo soporta)
+        pv2_v = 0.0
+        pv2_i = 0.0
+        try:
+            resp2 = serial_command('QPIGS2')
+            nums2 = resp2.split(' ')
+            dump_tokens('QPIGS2', resp2)  # DEBUG: comenta si no lo necesitas
+            if len(nums2) >= 15:
+                pv2_v, pv2_i = pv_from_nums(nums2)
+        except Exception as e:
+            print("[get_data] QPIGS2 no disponible:", e)
 
+        # PV1 desde QPIGS
+        pv1_v, pv1_i = pv_from_nums(nums)
+
+        data = '{'
+        # --- campos QPIGS que ya publicabas ---
         data += '"BusVoltage":' + str(safe_number(nums[7]))
         data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
         data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
@@ -174,6 +219,16 @@ def get_data():
         data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
         data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
         data += ',"DeviceStatus":"' + nums[16] + '"'
+
+        # --- NUEVO: PV1 / PV2 por separado ---
+        data += ',"Pv1InputVoltage":' + str(round(pv1_v, 2))
+        data += ',"Pv1InputCurrent":' + str(round(pv1_i, 2))
+        data += ',"Pv2InputVoltage":' + str(round(pv2_v, 2))
+        data += ',"Pv2InputCurrent":' + str(round(pv2_i, 2))
+
+        # (Opcional) Totales forzados a suma:
+        # data += ',"PvInputVoltage":' + str(round(pv1_v + pv2_v, 2))
+        # data += ',"PvInputCurrentForBattery":' + str(round(pv1_i + pv2_i, 2))
 
         data += '}'
         print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_data ]: END \n\n')
@@ -185,10 +240,10 @@ def get_data():
         return ''
 
 def get_settings():
-    #collect data from axpert inverter
+    # collect data from axpert inverter (parámetros fijos)
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n\n\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIGS')
+        print('\n\n\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIRI')
         response = serial_command('QPIRI')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -221,8 +276,6 @@ def get_settings():
         data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
         data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25]))
-
-        
         data += '}'
 
         print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_settings ]: END \n\n')
@@ -236,7 +289,6 @@ def map_with_log(table: dict, value: str, label: str) -> str:
     if value in table:
         return table[value]
     else:
-        # Aquí logeas el fallo con claridad
         print(f"[get_settings] Valor inesperado en {label}: {value} (claves válidas: {list(table.keys())})")
         return f"{label}_invalid({value})"
 
@@ -249,20 +301,24 @@ def send_data(data, topic):
         return 0
     return 1
 
+# ----------------- Conversión numérica robusta -----------------
 def safe_number(value):
+    """Convierte a número limpiando basura. Devuelve float/int; si no hay nada numérico, 0."""
+    s = str(value).strip().replace(',', '.')
+    m = re.search(r'-?\d+(?:\.\d+)?', s)
+    if not m:
+        return 0
+    s2 = m.group(0)
     try:
-        return int(value)
-    except ValueError:
-        try:
-            return float(value)
-        except ValueError:
-            return value
+        return int(s2) if re.fullmatch(r'-?\d+', s2) else float(s2)
+    except Exception:
+        return 0
 
-
+# ----------------- Main loop -----------------
 def main():
     time.sleep(randint(0, 5))  # so parallel streams might start at different times
     connect()
-    
+
     serial_number = serial_command('QID')
     print('Reading from inverter ' + serial_number)
 
@@ -272,20 +328,19 @@ def main():
             if data != '':
                 send_data(data, os.environ['MQTT_TOPIC_PARALLEL'])
             time.sleep(1)
-            
+
             data = get_data()
             if data != '':
                 send_data(data, os.environ['MQTT_TOPIC'].replace('{sn}', serial_number))
             time.sleep(1)
-            
+
             data = get_settings()
             if data != '':
                 send_data(data, os.environ['MQTT_TOPIC_SETTINGS'])
             time.sleep(4)
         except Exception as e:
             print("Error occurred:", e)
-            # Consider handling specific errors or performing a reconnect here
-            time.sleep(10)  # Delay before retrying to avoid continuous strain
+            time.sleep(10)  # avoid tight loop on error
 
 if __name__ == '__main__':
     main()

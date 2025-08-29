@@ -80,13 +80,13 @@ def serial_command(command):
             response = response.decode('iso-8859-1')
 
         print(response)
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
+
         response = response.rstrip()
         lastI = response.find('\r')
         response = response[1:lastI-2]
 
         file.close()
-        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
-
         return response
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -20,7 +20,7 @@ from binascii import unhexlify
 import paho.mqtt.client as mqtt
 from random import randint
 
-battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User'}
+battery_types = {0: 'AGM', 1: 'Flooded', 2: 'User', 3: 'Lithium' }
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
 charger_sources = {'0': 'utility first', '1': 'solar first', '2': 'solar + utility', '3': 'solar only'}

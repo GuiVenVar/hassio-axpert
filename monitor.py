@@ -109,7 +109,7 @@ def get_parallel_data():
             data += '"Gridmode":1'
         else:
             data += '"Gridmode":0'
-  data += ',"SerialNumber": ' + str(safe_number(nums[1]))
+        data += ',"SerialNumber": ' + str(safe_number(nums[1]))
         data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
         data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[26]))
         data += ',"TotalChargingCurrent": ' + str(safe_number(nums[15]))

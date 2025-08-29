@@ -15,6 +15,7 @@ import fcntl
 import re
 import unicodedata
 import crcmod.predefined
+from datetime import datetime
 from binascii import unhexlify
 import paho.mqtt.client as mqtt
 from random import randint
@@ -30,6 +31,8 @@ pv_ok_conditions = {'0': 'As long as one unit of inverters has connect PV, paral
 pv_power_balance = {'0': 'PV input max current will be the max charged current', '1': 'PV input max power will be the sum of the max charged power and loads power'}
 
 def connect():
+    date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print('\n['+date+'] - [monitor.py] - [ MQTT Connect ]: INIT')
     global client
     client = mqtt.Client(client_id=os.environ['MQTT_CLIENT_ID'])
     client.username_pw_set(os.environ['MQTT_USER'], os.environ['MQTT_PASS'])
@@ -40,6 +43,8 @@ def serial_command(command):
     print(command)
 
     try:
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n['+date+'] - [monitor.py] - [ serial_command ]: INIT')
         xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
         command_bytes = command.encode('utf-8')
         command_crc_hex = hex(xmodem_crc_func(command_bytes)).replace('0x', '')
@@ -82,7 +87,8 @@ def serial_command(command):
         file.close()
         return response
     except Exception as e:
-        print('error reading inverter...: ' + str(e))
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ serial_command ] - Error reading inverter...: ' + str(e))
         file.close()
         time.sleep(0.1)
         connect()
@@ -91,7 +97,8 @@ def serial_command(command):
 def get_parallel_data():
     #collect data from axpert inverter
     try:
-        print('[LOG] [monitory.py] - get_parallel_dat: INIT Serial Comand: QPGS0')
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n['+date+'] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
         nums = response.split(' ')
@@ -133,15 +140,16 @@ def get_parallel_data():
 
         data += '}'
     except Exception as e:
-        print('error parsing inverter data...: ' + str(e))
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: ' + str(e))
         return ''
     return data
 
 def get_data():
     #collect data from axpert inverter
     try:
-        
-        print('[LOG] [monitory.py] - get_data: INIT Serial Command: QPIGS')
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS')
         response = serial_command('QPIGS')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -162,14 +170,16 @@ def get_data():
         data += '}'
         return data
     except Exception as e:
-        print('error parsing inverter data...: ' + str(e))
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ get_data ] - Error parsing inverter data...: ' + str(e))
         return ''
 
 def get_settings():
     #collect data from axpert inverter
     try:
-        
-        print('[LOG] [monitory.py] - get_settings: INIT Serial Command: QPIRI')
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIGS')
+        get_settings: INIT Serial Command: QPIRI')
         response = serial_command('QPIRI')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -189,34 +199,46 @@ def get_settings():
         data += ',"BatteryUnderVoltage":' +  nums[9] + '"'
         data += ',"BatteryBulkVoltage":' +  nums[10] + '"'
         data += ',"BatteryFloatVoltage":' +  nums[11] + '"'
-        data += ',"BatteryType":"' + battery_types[nums[12]] + '"'
+        data += ',"BatteryType":"' + battery_types [safe_number(nums[12])] + '"'
         data += ',"MaxAcChargingCurrent":' +  nums[13] + '"'
         data += ',"MaxChargingCurrent":' +  nums[14] + '"'
-        data += ',"InputVoltageRange":"' + voltage_ranges[nums[15]] + '"'
-        data += ',"OutputSourcePriority":"' + output_sources[nums[16]] + '"'
-        data += ',"ChargerSourcePriority":"' + charger_sources[nums[17]] + '"'
+        data += ',"InputVoltageRange":"' + voltage_ranges [safe_number(nums[15])] + '"'
+        data += ',"OutputSourcePriority":"' + output_sources [safe_number(nums[16])] + '"'
+        data += ',"ChargerSourcePriority":"' + charger_sources[safe_number(nums[17])] + '"'
         data += ',"MaxParallelUnits":' +  nums[18] + '"'
-        data += ',"MachineType":"' + machine_types[nums[19]] + '"'
-        data += ',"Topology":"' + topologies[nums[20]] + '"'
-        data += ',"OutputMode":"' + output_modes[nums[21]] + '"'
+        data += ',"MachineType":"' + machine_types [safe_number(nums[19])] + '"'
+        data += ',"Topology":"' + topologies [safe_number(nums[20])] + '"'
+        data += ',"OutputMode":"' + output_modes [safe_number(nums[21])] + '"'
         data += ',"BatteryRedischargeVoltage":' +  nums[22] + '"'
-        data += ',"PvOkCondition":"' + pv_ok_conditions[nums[23]] + '"'
-        data += ',"PvPowerBalance":"' + pv_power_balance[nums[24]] + '"'
+        data += ',"PvOkCondition":"' + pv_ok_conditions [safe_number(nums[23])] + '"'
+        data += ',"PvPowerBalance":"' + pv_power_balance [safe_number(nums[24])] + '"'
         data += ',"MaxBatteryCvChargingTime":' +  nums[25] + '"'
         
         data += '}'
         return data
     except Exception as e:
-        print('error parsing inverter data...: ' + str(e))
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ get_settings ] - Error parsing inverter data...: ' + str(e))
         return ''
 
 def send_data(data, topic):
     try:
         client.publish(topic, data, 0, True)
     except Exception as e:
-        print("error sending to emoncms...: " + str(e))
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n['+date+'] - [monitor.py] - [ send_data ] - Error sending to emoncms...: ' + str(e))
         return 0
     return 1
+
+def safe_number(value):
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
 
 def main():
     time.sleep(randint(0, 5))  # so parallel streams might start at different times

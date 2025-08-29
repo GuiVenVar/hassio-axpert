@@ -32,7 +32,7 @@ pv_power_balance = {'0': 'PV input max current will be the max charged current',
 
 def connect():
     date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print('\n['+date+'] - [monitor.py] - [ MQTT Connect ]: INIT')
+    print('\n\n\n['+date+'] - [monitor.py] - [ MQTT Connect ]: INIT')
     global client
     client = mqtt.Client(client_id=os.environ['MQTT_CLIENT_ID'])
     client.username_pw_set(os.environ['MQTT_USER'], os.environ['MQTT_PASS'])
@@ -44,7 +44,7 @@ def serial_command(command):
 
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n['+date+'] - [monitor.py] - [ serial_command ]: INIT')
+        print('\n\n\n['+date+'] - [monitor.py] - [ serial_command ]: INIT')
         xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
         command_bytes = command.encode('utf-8')
         command_crc_hex = hex(xmodem_crc_func(command_bytes)).replace('0x', '')
@@ -98,7 +98,7 @@ def get_parallel_data():
     #collect data from axpert inverter
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n['+date+'] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
+        print('\n\n\n['+date+'] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
         nums = response.split(' ')
@@ -149,7 +149,7 @@ def get_data():
     #collect data from axpert inverter
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS')
+        print('\n\n\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS')
         response = serial_command('QPIGS')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -178,7 +178,7 @@ def get_settings():
     #collect data from axpert inverter
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIGS')
+        print('\n\n\n['+date+'] - [monitor.py] - [get_settings]: INIT Serial Command: QPIGS')
         response = serial_command('QPIRI')
         nums = response.split(' ')
         if len(nums) < 21:
@@ -198,19 +198,19 @@ def get_settings():
         data += ',"BatteryUnderVoltage":' +  nums[9] + '"'
         data += ',"BatteryBulkVoltage":' +  nums[10] + '"'
         data += ',"BatteryFloatVoltage":' +  nums[11] + '"'
-        data += ',"BatteryType":"' + battery_types [safe_number(nums[12])] + '"'
+        data += ',"BatteryType":"' + battery_types[safe_number(nums[12])] + '"'
         data += ',"MaxAcChargingCurrent":' +  nums[13] + '"'
         data += ',"MaxChargingCurrent":' +  nums[14] + '"'
-        data += ',"InputVoltageRange":"' + voltage_ranges [safe_number(nums[15])] + '"'
-        data += ',"OutputSourcePriority":"' + output_sources [safe_number(nums[16])] + '"'
+        data += ',"InputVoltageRange":"' + voltage_ranges[safe_number(nums[15])] + '"'
+        data += ',"OutputSourcePriority":"' + output_sources[safe_number(nums[16])] + '"'
         data += ',"ChargerSourcePriority":"' + charger_sources[safe_number(nums[17])] + '"'
         data += ',"MaxParallelUnits":' +  nums[18] + '"'
-        data += ',"MachineType":"' + machine_types [safe_number(nums[19])] + '"'
-        data += ',"Topology":"' + topologies [safe_number(nums[20])] + '"'
-        data += ',"OutputMode":"' + output_modes [safe_number(nums[21])] + '"'
+        data += ',"MachineType":"' + machine_types[safe_number(nums[19])] + '"'
+        data += ',"Topology":"' + topologies[safe_number(nums[20])] + '"'
+        data += ',"OutputMode":"' + output_modes[safe_number(nums[21])] + '"'
         data += ',"BatteryRedischargeVoltage":' +  nums[22] + '"'
-        data += ',"PvOkCondition":"' + pv_ok_conditions [safe_number(nums[23])] + '"'
-        data += ',"PvPowerBalance":"' + pv_power_balance [safe_number(nums[24])] + '"'
+        data += ',"PvOkCondition":"' + pv_ok_conditions[safe_number(nums[23])] + '"'
+        data += ',"PvPowerBalance":"' + pv_power_balance[safe_number(nums[24])] + '"'
         data += ',"MaxBatteryCvChargingTime":' +  nums[25] + '"'
         
         data += '}'
@@ -225,7 +225,7 @@ def send_data(data, topic):
         client.publish(topic, data, 0, True)
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('\n['+date+'] - [monitor.py] - [ send_data ] - Error sending to emoncms...: ' + str(e))
+        print('\n\n\n['+date+'] - [monitor.py] - [ send_data ] - Error sending to emoncms...: ' + str(e))
         return 0
     return 1
 

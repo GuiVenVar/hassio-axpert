@@ -109,30 +109,30 @@ def get_parallel_data():
             data += '"Gridmode":1'
         else:
             data += '"Gridmode":0'
-        data += ',"SerialNumber": ' + nums[1] + '"'
-        data += ',"BatteryChargingCurrent": ' + nums[12] + '"'
-        data += ',"BatteryDischargeCurrent": ' + nums[26] + '"'
-        data += ',"TotalChargingCurrent": ' +  nums[15] + '"'
-        data += ',"GridVoltage": ' +  nums[4] + '"'
-        data += ',"GridFrequency": ' +  nums[5] + '"'
-        data += ',"OutputVoltage": ' +  nums[6] + '"'
-        data += ',"OutputFrequency": ' +  nums[7] + '"'
-        data += ',"OutputAparentPower": ' +  nums[8] + '"'
-        data += ',"OutputActivePower": ' +  nums[9] + '"'
-        data += ',"LoadPercentage": ' +  nums[10] + '"'
-        data += ',"BatteryVoltage": ' +  nums[11] + '"'
-        data += ',"BatteryCapacity": ' +  nums[13] + '"'
-        data += ',"PvInputVoltage": ' +  nums[14] + '"'
-        data += ',"TotalAcOutputApparentPower": ' + nums[16] + '"'
-        data += ',"TotalAcOutputActivePower": ' + nums[17] + '"'
-        data += ',"TotalAcOutputPercentage": ' + nums[18] + '"'
+  data += ',"SerialNumber": ' + str(safe_number(nums[1]))
+        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
+        data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[26]))
+        data += ',"TotalChargingCurrent": ' + str(safe_number(nums[15]))
+        data += ',"GridVoltage": ' + str(safe_number(nums[4]))
+        data += ',"GridFrequency": ' + str(safe_number(nums[5]))
+        data += ',"OutputVoltage": ' + str(safe_number(nums[6]))
+        data += ',"OutputFrequency": ' + str(safe_number(nums[7]))
+        data += ',"OutputAparentPower": ' + str(safe_number(nums[8]))
+        data += ',"OutputActivePower": ' + str(safe_number(nums[9]))
+        data += ',"LoadPercentage": ' + str(safe_number(nums[10]))
+        data += ',"BatteryVoltage": ' + str(safe_number(nums[11]))
+        data += ',"BatteryCapacity": ' + str(safe_number(nums[13]))
+        data += ',"PvInputVoltage": ' + str(safe_number(nums[14]))
+        data += ',"TotalAcOutputApparentPower": ' + str(safe_number(nums[16]))
+        data += ',"TotalAcOutputActivePower": ' + str(safe_number(nums[17]))
+        data += ',"TotalAcOutputPercentage": ' + str(safe_number(nums[18]))
         # data += ',"InverterStatus": ' + nums[19]
-        data += ',"OutputMode": ' +  nums[20]  + '"'
-        data += ',"ChargerSourcePriority": ' +  nums[21]  + '"'
-        data += ',"MaxChargeCurrent": ' +  nums[22]  + '"'
-        data += ',"MaxChargerRange": ' +  nums[23]  + '"'
-        data += ',"MaxAcChargerCurrent": ' +  nums[24]  + '"'
-        data += ',"PvInputCurrentForBattery": ' +  nums[25]  + '"'
+        data += ',"OutputMode": ' + str(safe_number(nums[20]))
+        data += ',"ChargerSourcePriority": ' + str(safe_number(nums[21]))
+        data += ',"MaxChargeCurrent": ' + str(safe_number(nums[22]))
+        data += ',"MaxChargerRange": ' + str(safe_number(nums[23]))
+        data += ',"MaxAcChargerCurrent": ' + str(safe_number(nums[24]))
+        data += ',"PvInputCurrentForBattery": ' + str(safe_number(nums[25]))
         if nums[2] == 'B':
             data += ',"Solarmode":1'
         else:
@@ -157,14 +157,14 @@ def get_data():
 
         data = '{'
 
-        data += '"BusVoltage":' +  nums[7] + '"'
-        data += ',"InverterHeatsinkTemperature":' +  nums[11] + '"'
-        data += ',"BatteryVoltageFromScc":' +  nums[14] + '"'
-        data += ',"PvInputCurrent":' +  nums[12] + '"'
-        data += ',"PvInputVoltage":' +  nums[13] + '"'
-        data += ',"PvInputPower":' +  nums[19] + '"'
-        data += ',"BatteryChargingCurrent": ' +  nums[9] + '"'
-        data += ',"BatteryDischargeCurrent":' +  nums[15] + '"'
+        data += '"BusVoltage":' + str(safe_number(nums[7]))
+        data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
+        data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
+        data += ',"PvInputCurrent":' + str(safe_number(nums[12]))
+        data += ',"PvInputVoltage":' + str(safe_number(nums[13]))
+        data += ',"PvInputPower":' + str(safe_number(nums[19]))
+        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
+        data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
         data += ',"DeviceStatus":"' + nums[16] + '"'
 
         data += '}'
@@ -186,32 +186,32 @@ def get_settings():
 
         data = '{'
 
-        data += '"AcInputVoltage":' +  nums[0] + '"'
-        data += ',"AcInputCurrent":' +  nums[1] + '"'
-        data += ',"AcOutputVoltage":' +  nums[2] + '"'
-        data += ',"AcOutputFrequency":' +  nums[3] + '"'
-        data += ',"AcOutputCurrent":' +  nums[4] + '"'
-        data += ',"AcOutputApparentPower":' +  nums[5] + '"'
-        data += ',"AcOutputActivePower":' +  nums[6] + '"'
-        data += ',"BatteryVoltage":' +  nums[7] + '"'
-        data += ',"BatteryRechargeVoltage":' +  nums[8] + '"'
-        data += ',"BatteryUnderVoltage":' +  nums[9] + '"'
-        data += ',"BatteryBulkVoltage":' +  nums[10] + '"'
-        data += ',"BatteryFloatVoltage":' +  nums[11] + '"'
+        data += '"AcInputVoltage":' + str(safe_number(nums[0]))
+        data += ',"AcInputCurrent":' + str(safe_number(nums[1]))
+        data += ',"AcOutputVoltage":' + str(safe_number(nums[2]))
+        data += ',"AcOutputFrequency":' + str(safe_number(nums[3]))
+        data += ',"AcOutputCurrent":' + str(safe_number(nums[4]))
+        data += ',"AcOutputApparentPower":' + str(safe_number(nums[5]))
+        data += ',"AcOutputActivePower":' + str(safe_number(nums[6]))
+        data += ',"BatteryVoltage":' + str(safe_number(nums[7]))
+        data += ',"BatteryRechargeVoltage":' + str(safe_number(nums[8]))
+        data += ',"BatteryUnderVoltage":' + str(safe_number(nums[9]))
+        data += ',"BatteryBulkVoltage":' + str(safe_number(nums[10]))
+        data += ',"BatteryFloatVoltage":' + str(safe_number(nums[11]))
         data += ',"BatteryType":"' + battery_types[safe_number(nums[12])] + '"'
-        data += ',"MaxAcChargingCurrent":' +  nums[13] + '"'
-        data += ',"MaxChargingCurrent":' +  nums[14] + '"'
+        data += ',"MaxAcChargingCurrent":' + str(safe_number(nums[13]))
+        data += ',"MaxChargingCurrent":' + str(safe_number(nums[14]))
         data += ',"InputVoltageRange":"' + voltage_ranges[safe_number(nums[15])] + '"'
         data += ',"OutputSourcePriority":"' + output_sources[safe_number(nums[16])] + '"'
         data += ',"ChargerSourcePriority":"' + charger_sources[safe_number(nums[17])] + '"'
-        data += ',"MaxParallelUnits":' +  nums[18] + '"'
+        data += ',"MaxParallelUnits":' + str(safe_number(nums[18]))
         data += ',"MachineType":"' + machine_types[safe_number(nums[19])] + '"'
         data += ',"Topology":"' + topologies[safe_number(nums[20])] + '"'
         data += ',"OutputMode":"' + output_modes[safe_number(nums[21])] + '"'
-        data += ',"BatteryRedischargeVoltage":' +  nums[22] + '"'
+        data += ',"BatteryRedischargeVoltage":' + str(safe_number(nums[22]))
         data += ',"PvOkCondition":"' + pv_ok_conditions[safe_number(nums[23])] + '"'
         data += ',"PvPowerBalance":"' + pv_power_balance[safe_number(nums[24])] + '"'
-        data += ',"MaxBatteryCvChargingTime":' +  nums[25] + '"'
+        data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25]))
         
         data += '}'
         return data

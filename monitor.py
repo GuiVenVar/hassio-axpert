@@ -1,15 +1,14 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Voltronic/Axpert monitor — verificación de estrategias para todos
-# y QPIGS2 SIEMPRE por split-cr-padded.
+# Voltronic/Axpert monitor — QPIGS2 forzado a split-cr-padded, SN saneado para topics.
 # - CRC XMODEM binario (2 bytes big-endian)
 # - one-shot / split-cr-padded / blocks8 (verificación) para TODOS menos QPIGS2
 # - QPIGS2: split-cr-padded únicamente
-# - Sin recursión, un solo intento por comando (lo que pediste)
 # - Publica PV2 (I,V,P) en {sn}_pv2
+# - Sin recursión; un intento por comando (el bucle sigue vivo)
 
-import os, time, errno, struct
+import os, time, errno, struct, re
 from datetime import datetime
 import crcmod.predefined
 import paho.mqtt.client as mqtt
@@ -37,7 +36,31 @@ def connect():
     client.connect(os.environ['MQTT_SERVER'])
     print(os.environ['DEVICE'])
 
-# ---------- helpers HID ----------
+# ---------- helpers ----------
+def sanitize_id(s: str) -> str:
+    # Deja solo A-Z a-z 0-9 _ -
+    return re.sub(r'[^A-Za-z0-9_-]+', '', s or '')
+
+def safe_number(value):
+    try: return int(value)
+    except ValueError:
+        try: return float(value)
+        except ValueError: return value
+
+def map_with_log(table: dict, value: str, label: str) -> str:
+    if value in table: return table[value]
+    print(f"[get_settings] Valor inesperado en {label}: {value} (claves válidas: {list(table.keys())})")
+    return f"{label}_invalid({value})"
+
+def send_data(data, topic):
+    try:
+        client.publish(topic, data, 0, True)
+    except Exception as e:
+        print(f'[{now()}] - [monitor.py] - [ send_data ] - Error sending to MQTT...: {e}')
+        return 0
+    return 1
+
+# ---------- HID/serie ----------
 def _build_frame(cmd: str) -> bytes:
     xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
     cb = cmd.encode('ascii')
@@ -72,7 +95,7 @@ def _write_oneshot(fd: int, frame: bytes):
     os.write(fd, frame)
 
 def _write_split_cr_padded(fd: int, frame: bytes):
-    # Enviar cmd+CRC y luego un paquete de 8B cuyo primer byte es '\r'
+    # Enviar cmd+CRC y luego un paquete de 8B cuyo primer byte es '\r' (resto padding)
     cmd_crc, cr = frame[:-1], frame[-1:]
     os.write(fd, cmd_crc)
     os.write(fd, cr + b'\x00' * 7)
@@ -90,7 +113,6 @@ def _write_blocks8(fd: int, frame: bytes):
             chunk = chunk + b'\x00' * (CH - len(chunk))
         os.write(fd, chunk)
 
-# ---------- serial_command ----------
 def serial_command(command: str):
     """
     Para TODOS los comandos: probar one-shot → split-cr-padded → blocks8 (en ese orden),
@@ -108,11 +130,9 @@ def serial_command(command: str):
         _flush_input(fd)
 
         if command == "QPIGS2":
-            # forzado: la única que quieres para QPIGS2
             writer_name = "split-cr-padded"
             _write_split_cr_padded(fd, frame)
         else:
-            # verificación para todos los demás
             tried = []
             last_err = None
             for writer_name, writer in (("one-shot", _write_oneshot),
@@ -121,12 +141,11 @@ def serial_command(command: str):
                 try:
                     _flush_input(fd)
                     writer(fd, frame)
-                    break  # si write no lanza error, seguimos con la lectura
+                    break
                 except Exception as e:
                     tried.append(writer_name); last_err = e
                     continue
             else:
-                # si todas fallaron al escribir
                 raise last_err if last_err else OSError("all write strategies failed")
 
         resp = _read_until_cr(fd, timeout_s=5.0)
@@ -149,28 +168,7 @@ def serial_command(command: str):
         if fd is not None:
             try: os.close(fd)
             except: pass
-        # un solo intento, sin recursiones (como pediste)
         raise
-
-# ---------- utilidades ----------
-def safe_number(value):
-    try: return int(value)
-    except ValueError:
-        try: return float(value)
-        except ValueError: return value
-
-def map_with_log(table: dict, value: str, label: str) -> str:
-    if value in table: return table[value]
-    print(f"[get_settings] Valor inesperado en {label}: {value} (claves válidas: {list(table.keys())})")
-    return f"{label}_invalid({value})"
-
-def send_data(data, topic):
-    try:
-        client.publish(topic, data, 0, True)
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ send_data ] - Error sending to MQTT...: {e}')
-        return 0
-    return 1
 
 # ---------- Lecturas ----------
 def get_parallel_data():
@@ -300,10 +298,11 @@ def main():
     connect()
 
     try:
-        sn = serial_command('QID')
+        raw_sn = serial_command('QID')
     except Exception:
-        sn = 'unknown'
-    print('Reading from inverter ' + sn)
+        raw_sn = 'unknown'
+    sn = sanitize_id(raw_sn.strip())
+    print(f'Reading from inverter {sn} (raw="{raw_sn}")')
 
     while True:
         try:

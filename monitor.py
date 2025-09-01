@@ -1,8 +1,9 @@
 #! /usr/bin/python
-# Axpert Inverter control script (con QPIGS2 fix)
-# - Mantiene tu flujo original
-# - Arregla padding CRC
-# - En QPIGS2 envía el <CR> en un write separado (quirk HID)
+
+# Axpert Inverter control script
+
+# Read values from inverter, sends values to mqtt,
+# calculation of CRC is done by XMODEM
 
 import time, sys, string
 import sqlite3
@@ -38,146 +39,27 @@ def connect():
     client.connect(os.environ['MQTT_SERVER'])
     print(os.environ['DEVICE'])
 
-def _open_fd():
-    file = open(os.environ['DEVICE'], 'r+')
-    fd = file.fileno()
-    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-    return file, fd
-
 def serial_command(command):
-    import struct, errno
-    MAX_TRIES = 3
-    DEVICE = os.environ['DEVICE']
-
-    def build_frame(cmd: str) -> bytes:
-        xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
-        cmd_b = cmd.encode('ascii')
-        crc = xmodem_crc_func(cmd_b)
-        crc_b = struct.pack('>H', crc)  # 2 bytes big-endian
-        return cmd_b + crc_b + b'\x0d'  # frame completo
-
-    def write_chunks(fd: int, buf: bytes, chunk: int = 8):
-        # Escribe en trozos (HID suele aceptar 8 bytes). Reintenta EAGAIN.
-        off = 0
-        n = len(buf)
-        while off < n:
-            end = min(off + chunk, n)
-            try:
-                written = os.write(fd, buf[off:end])
-                if written <= 0:
-                    raise OSError(errno.EIO, "short write")
-                off += written
-            except OSError as e:
-                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                    time.sleep(0.01)
-                    continue
-                raise
-
-    frame = build_frame(command)
-    attempt = 0
-
-    while attempt < MAX_TRIES:
-        attempt += 1
-        print(command)
-        print(f"\n\n\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ]: INIT (try {attempt})")
-        fd = None
-        try:
-            # Abrimos en binario, no usando open(..., 'r+')
-            fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
-
-            # 1) Intento rápido: escribir todo de una
-            try:
-                os.write(fd, frame)
-            except OSError:
-                # 2) Fallback HID: escribir en trozos (8B)
-                write_chunks(fd, frame, chunk=8)
-
-            # 3) Leer hasta '\r'
-            response = b''
-            timeout_counter = 0
-            while b'\r' not in response:
-                if timeout_counter > 500:  # ~5s
-                    raise TimeoutError("Read operation timed out")
-                timeout_counter += 1
-                try:
-                    chunk = os.read(fd, 128)
-                    if chunk:
-                        response += chunk
-                    else:
-                        time.sleep(0.01)
-                except OSError as e:
-                    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                        time.sleep(0.01)
-                        continue
-                    raise
-
-            try:
-                resp_str = response.decode('utf-8')
-            except UnicodeDecodeError:
-                resp_str = response.decode('iso-8859-1')
-
-            print(resp_str)
-            print(f"\n\n\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ]: END \n\n")
-
-            # Recorte robusto
-            start = resp_str.find('(')
-            end = resp_str.find('\r')
-            if start != -1 and end != -1 and end > start:
-                payload = resp_str[start+1:end]
-            else:
-                # último recurso: strip
-                payload = resp_str.strip()
-
-            os.close(fd)
-            return payload
-
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ] - Error: {e}")
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except:
-                    pass
-            time.sleep(0.1)
-            # Si fue un fallo de EINVAL por write parcial, en el próximo intento ya vamos a chunking
-            # (ya lo hacemos arriba con el fallback). No hacemos recursión.
-            if attempt >= MAX_TRIES:
-                # Último recurso: relanzar la excepción para que el caller decida
-                raise
-            # En los reintentos, también refrescamos MQTT por si cayó
-            try:
-                connect()
-            except Exception as ee:
-                print(f"[monitor.py] [serial_command] MQTT reconnect error (ignored): {ee}")
-
     print(command)
 
     try:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('\n\n\n['+date+'] - [monitor.py] - [ serial_command ]: INIT')
-
-        # --- CRC XMODEM y padding correcto (4 dígitos hex) ---
         xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
         command_bytes = command.encode('utf-8')
-        crc_val = xmodem_crc_func(command_bytes)
-        command_crc_hex = format(crc_val, '04x')  # <-- zero-padded
-        frame_no_cr = command_bytes + unhexlify(command_crc_hex.encode('utf-8'))
-        cr = b'\x0d'
+        command_crc_hex = hex(xmodem_crc_func(command_bytes)).replace('0x', '')
+        command_crc = command_bytes + unhexlify(command_crc_hex.encode('utf-8')) + b'\x0d'
 
         try:
-            file, fd = _open_fd()
+            file = open(os.environ['DEVICE'], 'r+')
+            fd = file.fileno()
+            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
         except Exception as e:
             print('error open file descriptor: ' + str(e))
             exit()
 
-        # --- QUIRK HID: QPIGS2 pide 2 writes (frame y luego <CR>) ---
-        if command == 'QPIGS2':
-            os.write(fd, frame_no_cr)
-            time.sleep(0.01)
-            os.write(fd, cr)
-        else:
-            os.write(fd, frame_no_cr + cr)
+        os.write(fd, command_crc)
 
         response = b''
         timeout_counter = 0
@@ -189,36 +71,31 @@ def serial_command(command):
                 response += os.read(fd, 100)
             except Exception as e:
                 time.sleep(0.01)
-            # Mantengo tu check exacto:
             if len(response) > 0 and (response[0] != ord('(') or b'NAKss' in response):
                 raise Exception('NAKss')
 
         try:
-            response_str = response.decode('utf-8')
+            response = response.decode('utf-8')
         except UnicodeDecodeError:
-            response_str = response.decode('iso-8859-1')
+            response = response.decode('iso-8859-1')
 
-        print(response_str)
+        print(response)
         print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ serial_command ]: END \n\n')
 
-        # Mantengo tu corte original (ojo: era raro, pero no lo toco)
-        response_str = response_str.rstrip()
-        lastI = response_str.find('\r')
-        payload = response_str[1:lastI-2]
+        response = response.rstrip()
+        lastI = response.find('\r')
+        response = response[1:lastI-2]
 
         file.close()
-        return payload
+        return response
     except Exception as e:
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ serial_command ] - Error reading inverter...: ' + str(e))
-        try:
-            file.close()
-        except:
-            pass
+        file.close()
         time.sleep(0.1)
         connect()
         return serial_command(command)
-
+    
 def get_parallel_data():
     #collect data from axpert inverter
     try:
@@ -269,10 +146,7 @@ def get_parallel_data():
         print('['+date+'] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: ' + str(e))
 
         print('\n ** Response **')        
-        try:
-            print(response)
-        except:
-            pass
+        print(response)
         print('\n ** END Response **')
         return ''
 
@@ -309,6 +183,52 @@ def get_data():
         date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print('['+date+'] - [monitor.py] - [ get_data ] - Error parsing inverter data...: ' + str(e))
         return ''
+    
+def get_netDawta():
+    #collect data from axpert inverter
+    try:
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n\n\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS2')
+        response = serial_command('QPIGS2')
+        nums = response.split(' ')
+        if len(nums) < 21:
+            return ''
+
+        data = '\n\n\n{'
+
+        data += response
+
+        data += '}\n\n\n'
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_data ]: END \n\n')
+
+        return data
+    except Exception as e:
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ get_data ] - Error parsing inverter data...: ' + str(e))
+        return ''
+def get_netDawta1():
+    #collect data from axpert inverter
+    try:
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('\n\n\n['+date+'] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS2')
+        response = serial_command('QPGS2')
+        nums = response.split(' ')
+        if len(nums) < 21:
+            return ''
+
+        data = '\n\n\n{'
+
+        data += response
+
+        data += '}\n\n\n'
+        print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_data ]: END \n\n')
+
+        return data
+    except Exception as e:
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('['+date+'] - [monitor.py] - [ get_data ] - Error parsing inverter data...: ' + str(e))
+        return ''
+
 
 def get_settings():
     #collect data from axpert inverter
@@ -347,6 +267,8 @@ def get_settings():
         data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
         data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25]))
+
+        
         data += '}'
 
         print('\n\n\n['+datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'] - [monitor.py] - [ get_settings ]: END \n\n')
@@ -382,22 +304,6 @@ def safe_number(value):
         except ValueError:
             return value
 
-# --- Utilidad: una sola prueba de QPIGS2 al arrancar ---
-def probe_qpigs2_once():
-    print("\n--- PROBANDO QPIGS2 ---")
-    try:
-        r = serial_command('QPIGS2')
-        print(f"QPIGS2 payload: {r}")
-        # Si tu MAX lo sigue formato 3 campos: I V P
-        parts = r.split()
-        if len(parts) >= 3:
-            try:
-                pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
-                print(f"PV2 Current(A)={pv2_i}, PV2 Voltage(V)={pv2_v}, PV2 Power(W)={pv2_p}")
-            except:
-                pass
-    except Exception as e:
-        print(f"QPIGS2 error: {e}")
 
 def main():
     time.sleep(randint(0, 5))  # so parallel streams might start at different times
@@ -405,9 +311,6 @@ def main():
     
     serial_number = serial_command('QID')
     print('Reading from inverter ' + serial_number)
-
-    # Ver QPIGS2 (solo una vez)
-    probe_qpigs2_once()
 
     while True:
         try:
@@ -421,9 +324,24 @@ def main():
                 send_data(data, os.environ['MQTT_TOPIC'].replace('{sn}', serial_number))
             time.sleep(1)
             
+            data = get_netDawta()
+            if data != '':
+                send_data(data, os.environ['MQTT_TOPIC'].replace('{sn}', serial_number+'_100'))
+            time.sleep(1)
+
+            data = get_netDawta1()
+            if data != '':
+                send_data(data, os.environ['MQTT_TOPIC'].replace('{sn}', serial_number+'_101'))
+            time.sleep(1)  
+
             data = get_settings()
             if data != '':
                 send_data(data, os.environ['MQTT_TOPIC_SETTINGS'])
             time.sleep(4)
         except Exception as e:
             print("Error occurred:", e)
+            # Consider handling specific errors or performing a reconnect here
+            time.sleep(10)  # Delay before retrying to avoid continuous strain
+
+if __name__ == '__main__':
+    main()

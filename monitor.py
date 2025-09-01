@@ -1,13 +1,15 @@
 #! /usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Voltronic/Axpert monitor (HID-safe + QPIGS2 PV2)
+# Voltronic/Axpert monitor — verificación de estrategias para todos
+# y QPIGS2 SIEMPRE por split-cr-padded.
 # - CRC XMODEM binario (2 bytes big-endian)
-# - Estrategias HID: one-shot / split-cr-padded / blocks8
-# - Reintentos sin recursión
-# - QPIGS2 parsea PV2 (I,V,P) y lo publica en MQTT
+# - one-shot / split-cr-padded / blocks8 (verificación) para TODOS menos QPIGS2
+# - QPIGS2: split-cr-padded únicamente
+# - Sin recursión, un solo intento por comando (lo que pediste)
+# - Publica PV2 (I,V,P) en {sn}_pv2
 
-import os, sys, time, errno, struct
+import os, time, errno, struct
 from datetime import datetime
 import crcmod.predefined
 import paho.mqtt.client as mqtt
@@ -35,37 +37,13 @@ def connect():
     client.connect(os.environ['MQTT_SERVER'])
     print(os.environ['DEVICE'])
 
-# =========================
-#  SERIE / HID ROBUSTO
-# =========================
+# ---------- helpers HID ----------
 def _build_frame(cmd: str) -> bytes:
     xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
     cb = cmd.encode('ascii')
     crc = xmodem_crc_func(cb)
     crc_b = struct.pack('>H', crc)      # 2 bytes big-endian
     return cb + crc_b + b'\x0d'         # cmd + CRC + CR
-
-def _write_all(fd: int, buf: bytes):
-    os.write(fd, buf)
-
-def _write_split_cr_padded(fd: int, buf: bytes):
-    # cmd+CRC, y luego un paquete de 8B cuyo primer byte es '\r' (resto padding)
-    cmd_crc, cr = buf[:-1], buf[-1:]
-    os.write(fd, cmd_crc)
-    os.write(fd, cr + b'\x00' * 7)
-
-def _write_blocks8(fd: int, buf: bytes):
-    # divide en bloques de 8B; último bloque relleno con 0x00 tras el CR
-    CH = 8
-    off = 0
-    n = len(buf)
-    while off < n:
-        end = min(off + CH, n)
-        chunk = buf[off:end]
-        off = end
-        if len(chunk) < CH:
-            chunk = chunk + b'\x00' * (CH - len(chunk))
-        os.write(fd, chunk)
 
 def _read_until_cr(fd: int, timeout_s: float = 5.0) -> bytes:
     deadline = time.time() + timeout_s
@@ -75,79 +53,106 @@ def _read_until_cr(fd: int, timeout_s: float = 5.0) -> bytes:
             raise TimeoutError("Read operation timed out")
         try:
             c = os.read(fd, 128)
-            if c:
-                r += c
-            else:
-                time.sleep(0.01)
+            if c: r += c
+            else: time.sleep(0.01)
         except OSError as e:
             if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                 time.sleep(0.01); continue
             raise
     return r
 
+def _flush_input(fd: int):
+    try:
+        while True:
+            if not os.read(fd, 512): break
+    except OSError:
+        pass
+
+def _write_oneshot(fd: int, frame: bytes):
+    os.write(fd, frame)
+
+def _write_split_cr_padded(fd: int, frame: bytes):
+    # Enviar cmd+CRC y luego un paquete de 8B cuyo primer byte es '\r'
+    cmd_crc, cr = frame[:-1], frame[-1:]
+    os.write(fd, cmd_crc)
+    os.write(fd, cr + b'\x00' * 7)
+
+def _write_blocks8(fd: int, frame: bytes):
+    # Dividir en bloques de 8 bytes; último bloque rellenado con 0x00 tras el CR
+    CH = 8
+    off = 0
+    n = len(frame)
+    while off < n:
+        end = min(off + CH, n)
+        chunk = frame[off:end]
+        off = end
+        if len(chunk) < CH:
+            chunk = chunk + b'\x00' * (CH - len(chunk))
+        os.write(fd, chunk)
+
+# ---------- serial_command ----------
 def serial_command(command: str):
+    """
+    Para TODOS los comandos: probar one-shot → split-cr-padded → blocks8 (en ese orden),
+    y devolver en cuanto haya respuesta.
+    EXCEPTO para QPIGS2: usar SIEMPRE split-cr-padded directamente.
+    """
     DEVICE = os.environ['DEVICE']
     frame = _build_frame(command)
-    strategies = [
-        ("one-shot", _write_all),
-        ("split-cr-padded", _write_split_cr_padded),
-        ("blocks8", _write_blocks8),
-    ]
 
-    for attempt in range(1, 4):
-        print(command)
-        print(f"[{now()}] - [monitor.py] - [ serial_command ]: INIT (try {attempt})")
-        fd = None
-        try:
-            fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
+    print(command)
+    print(f"[{now()}] - [monitor.py] - [ serial_command ]: INIT")
+    fd = None
+    try:
+        fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
+        _flush_input(fd)
 
-            # para QPIGS2 probamos TODAS; para el resto, one-shot
-            for name, writer in (strategies if command == "QPIGS2" else [strategies[0]]):
+        if command == "QPIGS2":
+            # forzado: la única que quieres para QPIGS2
+            writer_name = "split-cr-padded"
+            _write_split_cr_padded(fd, frame)
+        else:
+            # verificación para todos los demás
+            tried = []
+            last_err = None
+            for writer_name, writer in (("one-shot", _write_oneshot),
+                                        ("split-cr-padded", _write_split_cr_padded),
+                                        ("blocks8", _write_blocks8)):
                 try:
-                    # limpia búfer de lectura
-                    try:
-                        while True:
-                            if not os.read(fd, 512): break
-                    except OSError:
-                        pass
-
+                    _flush_input(fd)
                     writer(fd, frame)
-                    resp = _read_until_cr(fd, timeout_s=5.0)
-
-                    try:
-                        s = resp.decode('utf-8')
-                    except UnicodeDecodeError:
-                        s = resp.decode('iso-8859-1')
-
-                    print(s)
-                    print(f"[{now()}] - [monitor.py] - [ serial_command ]: END ({name})\n")
-
-                    b = s.find('('); e = s.find('\r')
-                    payload = s[b+1:e] if (b != -1 and e != -1 and e > b) else s.strip()
-                    os.close(fd)
-                    return payload
-
-                except Exception as inner:
-                    if command != "QPIGS2":
-                        raise
-                    print(f"[{now()}] - [serial_command] strategy '{name}' failed: {inner}")
+                    break  # si write no lanza error, seguimos con la lectura
+                except Exception as e:
+                    tried.append(writer_name); last_err = e
                     continue
+            else:
+                # si todas fallaron al escribir
+                raise last_err if last_err else OSError("all write strategies failed")
 
-        except Exception as e:
-            print(f"[{now()}] - [monitor.py] - [ serial_command ] - Error: {e}")
-            if fd is not None:
-                try: os.close(fd)
-                except: pass
-            time.sleep(0.1)
-            if attempt == 3:
-                raise
-            try:
-                connect()
-            except Exception as ee:
-                print(f"[serial_command] MQTT reconnect ignored: {ee}")
+        resp = _read_until_cr(fd, timeout_s=5.0)
 
-# =========================
+        try:
+            s = resp.decode('utf-8')
+        except UnicodeDecodeError:
+            s = resp.decode('iso-8859-1')
 
+        print(s)
+        print(f"[{now()}] - [monitor.py] - [ serial_command ]: END ({writer_name})\n")
+
+        b = s.find('('); e = s.find('\r')
+        payload = s[b+1:e] if (b != -1 and e != -1 and e > b) else s.strip()
+        os.close(fd)
+        return payload
+
+    except Exception as e:
+        print(f"[{now()}] - [monitor.py] - [ serial_command ] - Error: {e}")
+        if fd is not None:
+            try: os.close(fd)
+            except: pass
+        # un solo intento, sin recursiones (como pediste)
+        raise
+
+# ---------- utilidades ----------
 def safe_number(value):
     try: return int(value)
     except ValueError:
@@ -228,26 +233,18 @@ def get_data():
         print(f'[{now()}] - [monitor.py] - [ get_data ] - Error parsing inverter data...: {e}')
         return ''
 
-def get_qpigs2():
-    """ QPIGS2 → PV2 (formato típico en MAX: I V P). Devuelve JSON listo para publicar. """
+def get_qpigs2_json():
+    """QPIGS2 (split-cr-padded). Devuelve JSON con PV2 (I,V,P) o '' si no parsea."""
     try:
-        print(f'[{now()}] - [monitor.py] - [get_qpigs2]: INIT Serial Command: QPIGS2')
-        r = serial_command('QPIGS2')  # p.ej. "16.7 222.3 03732"
+        print(f'[{now()}] - [monitor.py] - [get_qpigs2]: INIT Serial Command: QPIGS2 (split-cr-padded only)')
+        r = serial_command('QPIGS2')  # típicamente "I V P", p.ej. "16.7 222.3 03732"
         parts = r.split()
         if len(parts) >= 3:
             try:
-                print('PARTS OF QPIGS2: ' + r)
-                pv2_i = float(parts[0])
-                pv2_v = float(parts[1])
-                # hay firmwares que envían potencia con ceros delante
-                pv2_p = float(parts[2])
-                # fallback si la potencia viene a 0: calcula V*I
-                if pv2_p <= 0:
-                    pv2_p = round(pv2_v * pv2_i, 1)
+                pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
+                if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
                 print(f"[QPIGS2] PV2 Current(A)={pv2_i}, PV2 Voltage(V)={pv2_v}, PV2 Power(W)={pv2_p}")
-                data = '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
-                print(f'[{now()}] - [monitor.py] - [get_qpigs2]: END')
-                return data
+                return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
             except Exception as pe:
                 print(f"[get_qpigs2] parse error: {pe} raw='{r}'")
                 return ''
@@ -302,7 +299,6 @@ def main():
     time.sleep(randint(0, 5))
     connect()
 
-    # Identificación (opcional)
     try:
         sn = serial_command('QID')
     except Exception:
@@ -312,23 +308,23 @@ def main():
     while True:
         try:
             # QPGS0
-            data = get_parallel_data()
-            if data: send_data(data, os.environ['MQTT_TOPIC_PARALLEL'])
+            d = get_parallel_data()
+            if d: send_data(d, os.environ['MQTT_TOPIC_PARALLEL'])
             time.sleep(1)
 
-            # QPIGS (PV1)
-            data = get_data()
-            if data: send_data(data, os.environ['MQTT_TOPIC'].replace('{sn}', sn))
+            # QPIGS
+            d = get_data()
+            if d: send_data(d, os.environ['MQTT_TOPIC'].replace('{sn}', sn))
             time.sleep(1)
 
-            # QPIGS2 (PV2) -> publicamos JSON con I,V,P
-            pv2 = get_qpigs2()
+            # QPIGS2 (split-cr-padded ONLY)
+            pv2 = get_qpigs2_json()
             if pv2: send_data(pv2, os.environ['MQTT_TOPIC'].replace('{sn}', sn + '_pv2'))
             time.sleep(1)
 
-            # QPIRI (settings)
-            data = get_settings()
-            if data: send_data(data, os.environ['MQTT_TOPIC_SETTINGS'])
+            # QPIRI
+            d = get_settings()
+            if d: send_data(d, os.environ['MQTT_TOPIC_SETTINGS'])
             time.sleep(4)
 
         except Exception as e:

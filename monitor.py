@@ -46,6 +46,111 @@ def _open_fd():
     return file, fd
 
 def serial_command(command):
+    import struct, errno
+    MAX_TRIES = 3
+    DEVICE = os.environ['DEVICE']
+
+    def build_frame(cmd: str) -> bytes:
+        xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
+        cmd_b = cmd.encode('ascii')
+        crc = xmodem_crc_func(cmd_b)
+        crc_b = struct.pack('>H', crc)  # 2 bytes big-endian
+        return cmd_b + crc_b + b'\x0d'  # frame completo
+
+    def write_chunks(fd: int, buf: bytes, chunk: int = 8):
+        # Escribe en trozos (HID suele aceptar 8 bytes). Reintenta EAGAIN.
+        off = 0
+        n = len(buf)
+        while off < n:
+            end = min(off + chunk, n)
+            try:
+                written = os.write(fd, buf[off:end])
+                if written <= 0:
+                    raise OSError(errno.EIO, "short write")
+                off += written
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    time.sleep(0.01)
+                    continue
+                raise
+
+    frame = build_frame(command)
+    attempt = 0
+
+    while attempt < MAX_TRIES:
+        attempt += 1
+        print(command)
+        print(f"\n\n\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ]: INIT (try {attempt})")
+        fd = None
+        try:
+            # Abrimos en binario, no usando open(..., 'r+')
+            fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
+
+            # 1) Intento rápido: escribir todo de una
+            try:
+                os.write(fd, frame)
+            except OSError:
+                # 2) Fallback HID: escribir en trozos (8B)
+                write_chunks(fd, frame, chunk=8)
+
+            # 3) Leer hasta '\r'
+            response = b''
+            timeout_counter = 0
+            while b'\r' not in response:
+                if timeout_counter > 500:  # ~5s
+                    raise TimeoutError("Read operation timed out")
+                timeout_counter += 1
+                try:
+                    chunk = os.read(fd, 128)
+                    if chunk:
+                        response += chunk
+                    else:
+                        time.sleep(0.01)
+                except OSError as e:
+                    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        time.sleep(0.01)
+                        continue
+                    raise
+
+            try:
+                resp_str = response.decode('utf-8')
+            except UnicodeDecodeError:
+                resp_str = response.decode('iso-8859-1')
+
+            print(resp_str)
+            print(f"\n\n\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ]: END \n\n")
+
+            # Recorte robusto
+            start = resp_str.find('(')
+            end = resp_str.find('\r')
+            if start != -1 and end != -1 and end > start:
+                payload = resp_str[start+1:end]
+            else:
+                # último recurso: strip
+                payload = resp_str.strip()
+
+            os.close(fd)
+            return payload
+
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - [monitor.py] - [ serial_command ] - Error: {e}")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except:
+                    pass
+            time.sleep(0.1)
+            # Si fue un fallo de EINVAL por write parcial, en el próximo intento ya vamos a chunking
+            # (ya lo hacemos arriba con el fallback). No hacemos recursión.
+            if attempt >= MAX_TRIES:
+                # Último recurso: relanzar la excepción para que el caller decida
+                raise
+            # En los reintentos, también refrescamos MQTT por si cayó
+            try:
+                connect()
+            except Exception as ee:
+                print(f"[monitor.py] [serial_command] MQTT reconnect error (ignored): {ee}")
+
     print(command)
 
     try:

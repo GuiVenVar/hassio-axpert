@@ -333,7 +333,7 @@ def main():
         try:
             #HealtCheck
             d = get_healtcheck('true')
-            if d: send_data(d, os.environ['mqtt_healtCheck'])
+            if d: send_data(d, os.environ['MQTT_HEALTCHECK'])
             time.sleep(2)
 
             # QPGS0

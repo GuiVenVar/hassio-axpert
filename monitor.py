@@ -354,7 +354,7 @@ def main():
 
         except Exception as e:
             #HealtCheck
-            d = get_healtcheck('false')
+            d = get_healthcheck('false')
             if d: send_data(d, os.environ['mqtt_healtCheck'])
             time.sleep(2)
             print("Error occurred:", e)

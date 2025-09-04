@@ -121,9 +121,7 @@ def serial_command(command: str):
     """
     DEVICE = os.environ['DEVICE']
     frame = _build_frame(command)
-
-    print(command)
-    print(f"[{now()}] - [monitor.py] - [ serial_command ]: INIT")
+    print(f"[{now()}] - [monitor.py] - [ serial_command ]: Command: " + command)
     fd = None
     try:
         fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
@@ -172,19 +170,27 @@ def serial_command(command: str):
 
 def get_healtcheck(value):
     try:
-        print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
+        print('  ')
+        print('  ')
+        print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: INIT Serial Comand: get_healtcheck')
         data = '{'        
-        data += '"Gridmode":' + ('1' if value=='true' else '0')
-        + '}'
+        if value == 'true':
+         data += '"Gridmode": 1'
+        else:           
+         data += '"Gridmode": 0'
+        data += '}'
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_healtcheck ] - Error parsing inverter data...: {e}')
         return ''
     print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: END')
+    
     return data
 
 # ---------- Lecturas ----------
 def get_parallel_data():
-    try:
+    try:     
+        print('  ')
+        print('  ')
         print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
@@ -223,7 +229,9 @@ def get_parallel_data():
     return data
 
 def get_data():
-    try:
+    try:       
+        print('  ')
+        print('  ')
         print(f'[{now()}] - [monitor.py] - [get_data]: INIT Serial Command: QPIGS')
         response = serial_command('QPIGS')
         nums = response.split(' ')
@@ -246,8 +254,10 @@ def get_data():
 
 def get_qpigs2_json():
     """QPIGS2 (split-cr-padded). Devuelve JSON con PV2 (I,V,P) o '' si no parsea."""
-    try:
-        print(f'[{now()}] - [monitor.py] - [get_qpigs2]: INIT Serial Command: QPIGS2 (split-cr-padded only)')
+    try:        
+        print('  ')
+        print('  ')
+        print(f'[{now()}] - [monitor.py] - [get_qpigs2_json]: INIT Serial Command: QPIGS2 (split-cr-padded only)')
         r = serial_command('QPIGS2')  # típicamente "I V P", p.ej. "16.7 222.3 03732"
         parts = r.split()
         if len(parts) >= 3:
@@ -268,6 +278,8 @@ def get_qpigs2_json():
 
 def get_settings():
     try:
+        print('  ')
+        print('  ')
         print(f'\n\n\n[{now()}] - [monitor.py] - [get_settings]: INIT Serial Command: QPIRI')
         response = serial_command('QPIRI')
         nums = response.split(' ')

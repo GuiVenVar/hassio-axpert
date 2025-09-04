@@ -175,9 +175,9 @@ def get_healtcheck(value):
         print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: INIT Serial Comand: get_healtcheck')
         data = '{'        
         if value == 'true':
-         data += '"Gridmode": 1'
+         data += '"Health": OK'
         else:           
-         data += '"Gridmode": 0'
+         data += '"Health": NO OK'
         data += '}'
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_healtcheck ] - Error parsing inverter data...: {e}')

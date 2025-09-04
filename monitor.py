@@ -168,22 +168,20 @@ def serial_command(command: str):
             except: pass
         raise
 
-def get_healtcheck(value):
+def get_healthcheck(value):
     try:
         print('  ')
         print('  ')
-        print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: INIT Serial Comand: get_healtcheck')
+        print(f'[{now()}] - [monitor.py] - [ get_healthcheck ]: INIT Serial Comand: get_healhtcheck')
         data = '{'        
         if value == 'true':
-         data += '"Health": OK'
+         data += '"Health": "OK"'
         else:           
-         data += '"Health": NO OK'
+         data += '"Health": "NO OK"'
         data += '}'
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_healtcheck ] - Error parsing inverter data...: {e}')
-        return ''
-    print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: END')
-    
+        print(f'[{now()}] - [monitor.py] - [ get_healhtcheck ] - Error parsing inverter data...: {e}')
+        return ''    
     return data
 
 # ---------- Lecturas ----------
@@ -191,7 +189,7 @@ def get_parallel_data():
     try:     
         print('  ')
         print('  ')
-        print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
+        print(f'[{now()}] - [monitor.py] - [ get_parallel_data ]: INIT Serial Comand: QPGS0')
         data = '{'
         response = serial_command('QPGS0')
         nums = response.split(' ')
@@ -224,7 +222,6 @@ def get_parallel_data():
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: {e}')
         return ''
-    print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: END')
     return data
 
 def get_data():
@@ -245,7 +242,6 @@ def get_data():
         data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
         data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
         data += ',"DeviceStatus":"' + nums[16] + '"}'
-        print(f'[{now()}] - [monitor.py] - [ get_data ]: END')
         return data
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_data ] - Error parsing inverter data...: {e}')
@@ -310,7 +306,6 @@ def get_settings():
         data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
         data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25])) + '}'
-        print(f'[{now()}] - [monitor.py] - [ get_settings ]: END')
         return data
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_settings ] - Error parsing inverter data...: ' + str(e))
@@ -331,8 +326,8 @@ def main():
     while True:
         try:
             #HealtCheck
-            d = get_healtcheck('true')
-            if d: send_data(d, os.environ['MQTT_HEALTCHECK'])
+            d = get_healthcheck('true')
+            if d: send_data(d, os.environ['MQTT_HEALTHCHECK'])
             time.sleep(2)
 
             # QPGS0

@@ -7,6 +7,7 @@ MQTT_PASS="$(jq --raw-output '.mqtt_pass' $CONFIG_PATH)" \
 MQTT_CLIENT_ID="$(jq --raw-output '.mqtt_client_id' $CONFIG_PATH)" \
 MQTT_TOPIC_PARALLEL="$(jq --raw-output '.mqtt_topic_parallel' $CONFIG_PATH)" \
 MQTT_TOPIC_SETTINGS="$(jq --raw-output '.mqtt_topic_settings' $CONFIG_PATH)" \
+MQTT_HEALTCHECK="$(jq --raw-output '.mqtt_healtCheck' $CONFIG_PATH)" \
 MQTT_TOPIC="$(jq --raw-output '.mqtt_topic' $CONFIG_PATH)" \
 DEVICE="$(jq --raw-output '.device' $CONFIG_PATH)" \
 python /monitor.py

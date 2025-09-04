@@ -170,6 +170,18 @@ def serial_command(command: str):
             except: pass
         raise
 
+def get_healtcheck(value):
+    try:
+        print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
+        data = '{'        
+        data += '"healCheck":' + ('1' if value==True else '0')
+        + '}'
+    except Exception as e:
+        print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: {e}')
+        return ''
+    print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: END')
+    return data
+
 # ---------- Lecturas ----------
 def get_parallel_data():
     try:
@@ -202,7 +214,8 @@ def get_parallel_data():
         data += ',"MaxChargerRange": ' + str(safe_number(nums[23]))
         data += ',"MaxAcChargerCurrent": ' + str(safe_number(nums[24]))
         data += ',"PvInputCurrentForBattery": ' + str(safe_number(nums[25]))
-        data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') + '}'
+        data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') 
+        + '}'
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: {e}')
         return ''
@@ -306,27 +319,38 @@ def main():
 
     while True:
         try:
+            #HealtCheck
+            d = get_healtcheck(True)
+            if d: send_data(d, os.environ['mqtt_healtCheck'])
+            time.sleep(2)
+
             # QPGS0
             d = get_parallel_data()
             if d: send_data(d, os.environ['MQTT_TOPIC_PARALLEL'])
-            time.sleep(1)
+            time.sleep(2)
 
             # QPIGS
             d = get_data()
             if d: send_data(d, os.environ['MQTT_TOPIC'].replace('{sn}', sn))
-            time.sleep(1)
+            time.sleep(2)
 
             # QPIGS2 (split-cr-padded ONLY)
             pv2 = get_qpigs2_json()
             if pv2: send_data(pv2, os.environ['MQTT_TOPIC'].replace('{sn}', sn + '_pv2'))
-            time.sleep(1)
+            time.sleep(2)
 
             # QPIRI
             d = get_settings()
             if d: send_data(d, os.environ['MQTT_TOPIC_SETTINGS'])
-            time.sleep(4)
+            time.sleep(5)
+
+
 
         except Exception as e:
+            #HealtCheck
+            d = get_healtcheck(False)
+            if d: send_data(d, os.environ['mqtt_healtCheck'])
+            time.sleep(2)
             print("Error occurred:", e)
             time.sleep(10)
 

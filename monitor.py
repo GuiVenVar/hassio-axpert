@@ -220,8 +220,7 @@ def get_parallel_data():
         data += ',"MaxChargerRange": ' + str(safe_number(nums[23]))
         data += ',"MaxAcChargerCurrent": ' + str(safe_number(nums[24]))
         data += ',"PvInputCurrentForBattery": ' + str(safe_number(nums[25]))
-        data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') 
-        + '}'
+        data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') + '}'
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: {e}')
         return ''

@@ -1,6 +1,6 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.18-GVENTURA",
+  "version": "0.5.19-GVENTURA",
   "slug": "axpert_hid",
   "description": "Monitors an axpert inverter with HID support",
   "arch": ["amd64", "armv7"],

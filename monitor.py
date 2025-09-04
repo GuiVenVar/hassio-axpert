@@ -174,12 +174,12 @@ def get_healtcheck(value):
     try:
         print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: INIT Serial Comand: QPGS0')
         data = '{'        
-        data += '"healCheck":' + ('1' if value==True else '0')
+        data += '"Gridmode":' + ('1' if value=='true' else '0')
         + '}'
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error parsing inverter data...: {e}')
+        print(f'[{now()}] - [monitor.py] - [ get_healtcheck ] - Error parsing inverter data...: {e}')
         return ''
-    print(f'[{now()}] - [monitor.py] - [ get_parallel_dat ]: END')
+    print(f'[{now()}] - [monitor.py] - [ get_healtcheck ]: END')
     return data
 
 # ---------- Lecturas ----------
@@ -320,7 +320,7 @@ def main():
     while True:
         try:
             #HealtCheck
-            d = get_healtcheck(True)
+            d = get_healtcheck('true')
             if d: send_data(d, os.environ['mqtt_healtCheck'])
             time.sleep(2)
 
@@ -348,7 +348,7 @@ def main():
 
         except Exception as e:
             #HealtCheck
-            d = get_healtcheck(False)
+            d = get_healtcheck('false')
             if d: send_data(d, os.environ['mqtt_healtCheck'])
             time.sleep(2)
             print("Error occurred:", e)

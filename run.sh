@@ -10,5 +10,7 @@ MQTT_TOPIC_SETTINGS="$(jq --raw-output '.mqtt_topic_settings' $CONFIG_PATH)" \
 MQTT_HEALTHCHECK="$(jq --raw-output '.mqtt_healthCheck' $CONFIG_PATH)" \
 MQTT_TOPIC="$(jq --raw-output '.mqtt_topic' $CONFIG_PATH)" \
 DEVICE="$(jq --raw-output '.device' $CONFIG_PATH)" \
-UPDATE_TIME="$(jq --raw-output '.update_time' $CONFIG_PATH)" \
+SETTINGS_INTERVAL="$(jq --raw-output '.settings_interval' $CONFIG_PATH)" \
+DATA_INTERVAL="$(jq --raw-output '.data_interval' $CONFIG_PATH)" \
+HEALTH_INTERVAL="$(jq --raw-output '.health_interval' $CONFIG_PATH)" \
 python /monitor.py

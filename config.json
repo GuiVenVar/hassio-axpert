@@ -1,6 +1,6 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.22-GVENTURA",
+  "version": "0.5.23-GVENTURA",
   "slug": "axpert_hid",
   "description": "Monitors an axpert inverter with HID support",
   "arch": ["amd64", "armv7"],
@@ -25,6 +25,7 @@
     "mqtt_topic": "power/axpert{sn}",
     "mqtt_healthCheck": "axpert/healthCheck",
     "device": "/dev/hidraw1",
+    "update_time": 1,
     "poll_interval": "1"
   },
 
@@ -38,6 +39,7 @@
     "mqtt_topic": "str",
     "mqtt_healthCheck": "str",
     "device": "str",
-    "poll_interval": "str"
+    "poll_interval": "str",
+    "update_time": "int"
   }
 }

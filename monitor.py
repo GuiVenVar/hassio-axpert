@@ -328,28 +328,35 @@ def main():
             #HealtCheck
             d = get_healthcheck('true')
             if d: send_data(d, os.environ['MQTT_HEALTHCHECK'])
-            time.sleep(2)
+            time.sleep(1)
 
             # QPGS0
             d = get_parallel_data()
             if d: send_data(d, os.environ['MQTT_TOPIC_PARALLEL'])
-            time.sleep(2)
+            time.sleep(1)
 
             # QPIGS
             d = get_data()
             if d: send_data(d, os.environ['MQTT_TOPIC'].replace('{sn}', sn))
-            time.sleep(2)
+            time.sleep(1)
 
             # QPIGS2 (split-cr-padded ONLY)
             pv2 = get_qpigs2_json()
             if pv2: send_data(pv2, os.environ['MQTT_TOPIC'].replace('{sn}', sn + '_pv2'))
-            time.sleep(2)
+            time.sleep(1)
 
             # QPIRI
             d = get_settings()
-            if d: send_data(d, os.environ['MQTT_TOPIC_SETTINGS'])
-            time.sleep(5)
+            if d: send_data(d, os.environ['MQTT_TOPIC_SETTINGS'])    
+            update_time=2        
+            try:
+                update_time = int(os.environ.get("UPDATE_TIME", 2))
+                time.sleep(update_time)
+            except ValueError:
+                update_time = 2
 
+                
+            time.sleep(update_time)
 
 
         except Exception as e:

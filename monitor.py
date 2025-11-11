@@ -1,19 +1,96 @@
-import serial
+#!/usr/bin/env python3
+import os
+import time
+import random
+import json
 import logging
+import serial
+import paho.mqtt.client as mqtt
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# ---------------- Logger ----------------
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "DEBUG"))
+logger = logging.getLogger("inverter-monitor")
 
-def safe_number(value):
-    """Convierte a número si puede, si no devuelve 0"""
+# ---------------- MQTT client ----------------
+client = None
+
+def connect():
+    global client
+    mqtt_server = os.environ.get("MQTT_SERVER")
+    mqtt_client_id = os.environ.get("MQTT_CLIENT_ID", f"inverter-{random.randint(0,9999)}")
+    mqtt_user = os.environ.get("MQTT_USER")
+    mqtt_pass = os.environ.get("MQTT_PASS")
+
+    if not mqtt_server:
+        logger.error("MQTT_SERVER no definido en variables de entorno")
+        raise RuntimeError("MQTT_SERVER no definido")
+
+    logger.info("[MQTT] Connecting…")
+    client = mqtt.Client(client_id=mqtt_client_id)
+    if mqtt_user:
+        client.username_pw_set(mqtt_user, mqtt_pass)
     try:
-        return float(value)
-    except:
+        client.connect(mqtt_server)
+        client.loop_start()
+        logger.info("[MQTT] Connected to %s", mqtt_server)
+    except Exception:
+        logger.exception("No se pudo conectar al broker MQTT")
+        raise
+
+def send_data(data, topic):
+    """
+    Publica en MQTT. Acepta dict o string; si es dict hace json.dumps.
+    Devuelve 1 en caso de OK, 0 en caso de fallo (compatibilidad con tu código antiguo).
+    """
+    if client is None:
+        logger.error("MQTT client no inicializado")
         return 0
 
+    try:
+        payload = data
+        if isinstance(data, dict):
+            payload = json.dumps(data, ensure_ascii=False)
+        elif not isinstance(data, str):
+            payload = str(data)
+
+        client.publish(topic, payload, qos=0, retain=True)
+        logger.debug("[MQTT] topic=%s bytes=%d payload=%s", topic, len(payload), payload[:200])
+        return 1
+    except Exception as e:
+        logger.exception("[MQTT] publish failed: %s", e)
+        return 0
+
+# ---------------- Utilities ----------------
+def safe_number(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+def sanitize_id(raw):
+    """
+    Limpia el raw SN y devuelve algo legible. Ajusta según el formato real que devuelva QID.
+    """
+    if not raw:
+        return "unknown"
+    # intentar extraer dígitos
+    import re
+    m = re.search(r'(\d+)', raw)
+    if m:
+        return m.group(1)
+    # si no hay dígitos, devolver raw saneado
+    return raw.strip()
+
+# ---------------- Inversor (serial) ----------------
 class Inversor:
     def __init__(self, port="/dev/ttyUSB0", baudrate=2400, timeout=1):
-        self.ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
+        self.port = port
+        try:
+            self.ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
+            logger.info("Puerto serie abierto en %s", port)
+        except Exception:
+            logger.exception("No se pudo abrir el puerto serie %s", port)
+            raise
 
     def send_cmd(self, cmd):
         frame = cmd.encode('ascii') + b'\r'
@@ -21,95 +98,295 @@ class Inversor:
         resp = self.ser.readline()
         return resp.decode('ascii', errors='ignore').strip()
 
-    def parse_qid(self, resp):
-        nums = resp.strip('()').split()
-        data = '{"SerialNumber":' + str(safe_number(nums[0])) + '}'
-        return data
-
+    # Parsers devuelven dict (robustos)
     def parse_qpigs(self, resp):
         nums = resp.strip('()').split()
-        data = '{'
-        data += '"ACInputVoltage":' + str(safe_number(nums[0]))
-        data += ',"ACInputFrequency":' + str(safe_number(nums[1]))
-        data += ',"ACOutputVoltage":' + str(safe_number(nums[2]))
-        data += ',"ACOutputFrequency":' + str(safe_number(nums[3]))
-        data += ',"ACOutputApparentPower":' + str(safe_number(nums[4]))
-        data += ',"ACOutputActivePower":' + str(safe_number(nums[5]))
-        data += ',"LoadPercentage":' + str(safe_number(nums[6]))
-        data += ',"BusVoltage":' + str(safe_number(nums[7]))
-        data += ',"BatteryVoltage":' + str(safe_number(nums[8]))
-        data += ',"BatteryChargeCurrent":' + str(safe_number(nums[9]))
-        data += ',"BatteryCapacity":' + str(safe_number(nums[10]))
-        data += ',"PVInputCurrent":' + str(safe_number(nums[11]))
-        data += '}'
-        return data
-
-    def parse_qpiri(self, resp):
-        nums = resp.strip('()').split()
-        data = '{'
-        data += '"ACNominalVoltage":' + str(safe_number(nums[0]))
-        data += ',"ACNominalFrequency":' + str(safe_number(nums[1]))
-        data += ',"MaxChargeCurrent":' + str(safe_number(nums[5]))
-        data += ',"MaxDischargeCurrent":' + str(safe_number(nums[6]))
-        data += ',"BatteryNominalVoltage":' + str(safe_number(nums[7]))
-        data += ',"PVInputVoltageMin":' + str(safe_number(nums[8]))
-        data += ',"PVInputVoltageMax":' + str(safe_number(nums[9]))
-        data += '}'
-        return data
+        nums = nums + [''] * 12
+        return {
+            "ACInputVoltage": safe_number(nums[0]),
+            "ACInputFrequency": safe_number(nums[1]),
+            "ACOutputVoltage": safe_number(nums[2]),
+            "ACOutputFrequency": safe_number(nums[3]),
+            "ACOutputApparentPower": safe_number(nums[4]),
+            "ACOutputActivePower": safe_number(nums[5]),
+            "LoadPercentage": safe_number(nums[6]),
+            "BusVoltage": safe_number(nums[7]),
+            "BatteryVoltage": safe_number(nums[8]),
+            "BatteryChargeCurrent": safe_number(nums[9]),
+            "BatteryCapacity": safe_number(nums[10]),
+            "PVInputCurrent": safe_number(nums[11]),
+        }
 
     def parse_qpigs2(self, resp):
         nums = resp.strip('()').split()
-        data = '{'
-        data += '"PVVoltage":' + str(safe_number(nums[0]))
-        data += ',"BatterySOC":' + str(safe_number(nums[1]))
-        data += ',"BatteryTemperature":' + str(safe_number(nums[2]))
-        data += '}'
-        return data
+        nums = nums + [''] * 3
+        return {
+            "PVVoltage": safe_number(nums[0]),
+            "BatterySOC": safe_number(nums[1]),
+            "BatteryTemperature": safe_number(nums[2]),
+        }
 
     def parse_qpgs0(self, resp):
         nums = resp.strip('()').split()
-        data = '{'
-        data += '"Gridmode":' + ('1' if nums[2] == 'L' else '0')
-        data += ',"SerialNumber":' + str(safe_number(nums[1]))
-        data += ',"BatteryChargingCurrent":' + str(safe_number(nums[12]))
-        data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[26]))
-        data += ',"TotalChargingCurrent":' + str(safe_number(nums[15]))
-        data += ',"GridVoltage":' + str(safe_number(nums[4]))
-        data += ',"GridFrequency":' + str(safe_number(nums[5]))
-        data += ',"OutputVoltage":' + str(safe_number(nums[6]))
-        data += ',"OutputFrequency":' + str(safe_number(nums[7]))
-        data += ',"OutputAparentPower":' + str(safe_number(nums[8]))
-        data += ',"OutputActivePower":' + str(safe_number(nums[9]))
-        data += ',"LoadPercentage":' + str(safe_number(nums[10]))
-        data += ',"BatteryVoltage":' + str(safe_number(nums[11]))
-        data += ',"BatteryCapacity":' + str(safe_number(nums[13]))
-        data += ',"PvInputVoltage":' + str(safe_number(nums[14]))
-        data += ',"TotalAcOutputApparentPower":' + str(safe_number(nums[16]))
-        data += ',"TotalAcOutputActivePower":' + str(safe_number(nums[17]))
-        data += ',"TotalAcOutputPercentage":' + str(safe_number(nums[18]))
-        data += ',"OutputMode":' + str(safe_number(nums[20]))
-        data += ',"ChargerSourcePriority":' + str(safe_number(nums[21]))
-        data += ',"MaxChargeCurrent":' + str(safe_number(nums[22]))
-        data += ',"MaxChargerRange":' + str(safe_number(nums[23]))
-        data += ',"MaxAcChargerCurrent":' + str(safe_number(nums[24]))
-        data += ',"PvInputCurrentForBattery":' + str(safe_number(nums[25]))
-        data += ',"Solarmode":' + ('1' if nums[2] == 'B' else '0')
-        data += '}'
-        logger.debug("[QPGS0] payload built")
-        return data
+        nums = nums + [''] * 30
+        return {
+            "Gridmode": 1 if (len(nums) > 2 and nums[2] == 'L') else 0,
+            "SerialNumber": safe_number(nums[1]),
+            "BatteryChargingCurrent": safe_number(nums[12]),
+            "BatteryDischargeCurrent": safe_number(nums[26]),
+            "TotalChargingCurrent": safe_number(nums[15]),
+            "GridVoltage": safe_number(nums[4]),
+            "GridFrequency": safe_number(nums[5]),
+            "OutputVoltage": safe_number(nums[6]),
+            "OutputFrequency": safe_number(nums[7]),
+            "OutputAparentPower": safe_number(nums[8]),
+            "OutputActivePower": safe_number(nums[9]),
+            "LoadPercentage": safe_number(nums[10]),
+            "BatteryVoltage": safe_number(nums[11]),
+            "BatteryCapacity": safe_number(nums[13]),
+            "PvInputVoltage": safe_number(nums[14]),
+            "TotalAcOutputApparentPower": safe_number(nums[16]),
+            "TotalAcOutputActivePower": safe_number(nums[17]),
+            "TotalAcOutputPercentage": safe_number(nums[18]),
+            "OutputMode": safe_number(nums[20]),
+            "ChargerSourcePriority": safe_number(nums[21]),
+            "MaxChargeCurrent": safe_number(nums[22]),
+            "MaxChargerRange": safe_number(nums[23]),
+            "MaxAcChargerCurrent": safe_number(nums[24]),
+            "PvInputCurrentForBattery": safe_number(nums[25]),
+            "Solarmode": 1 if (len(nums) > 2 and nums[2] == 'B') else 0,
+        }
 
-    def get_status(self):
-        status = {}
-        status["QID"] = self.parse_qid(self.send_cmd("QID"))
-        status["QPIGS"] = self.parse_qpigs(self.send_cmd("QPIGS"))
-        status["QPIRI"] = self.parse_qpiri(self.send_cmd("QPIRI"))
-        status["QPIGS2"] = self.parse_qpigs2(self.send_cmd("QPIGS2"))
-        status["QPGS0"] = self.parse_qpgs0(self.send_cmd("QPGS0"))
-        return status
+    def parse_qpiri(self, resp):
+        nums = resp.strip('()').split()
+        nums = nums + [''] * 10
+        return {
+            "ACNominalVoltage": safe_number(nums[0]),
+            "ACNominalFrequency": safe_number(nums[1]),
+            "MaxChargeCurrent": safe_number(nums[5]),
+            "MaxDischargeCurrent": safe_number(nums[6]),
+            "BatteryNominalVoltage": safe_number(nums[7]),
+            "PVInputVoltageMin": safe_number(nums[8]),
+            "PVInputVoltageMax": safe_number(nums[9]),
+        }
 
-# --- Uso ---
+# ---------------- Funciones que replican tu código anterior ----------------
+
+def get_data(inv):
+    """
+    Equivalente a tu antigua función get_data().
+    Devuelve dict con QPIGS (u otros campos que quieras agregar).
+    """
+    try:
+        resp = inv.send_cmd("QPIGS")
+        parsed = inv.parse_qpigs(resp)
+        # si quieres conservar nombre antiguo, encapsulamos en un key
+        return {"QPIGS": parsed}
+    except Exception:
+        logger.exception("get_data() falló")
+        return None
+
+def get_qpigs2_json(inv):
+    """
+    Equivalente a tu antigua get_qpigs2_json()
+    """
+    try:
+        resp = inv.send_cmd("QPIGS2")
+        parsed = inv.parse_qpigs2(resp)
+        return parsed
+    except Exception:
+        logger.exception("get_qpigs2_json() falló")
+        return None
+
+def get_parallel_data(inv):
+    """
+    Equivalente a tu antigua get_parallel_data() (QPGS0)
+    """
+    try:
+        resp = inv.send_cmd("QPGS0")
+        parsed = inv.parse_qpgs0(resp)
+        return parsed
+    except Exception:
+        logger.exception("get_parallel_data() falló")
+        return None
+
+def get_healthcheck(inv, prefer_true='true'):
+    """
+    Si prefer_true == 'true' intentará lecturas que sólo funcionan con privilegios/paralelo.
+    Para mantener compatibilidad con tu flow anterior, soporta 'true'/'false' strings.
+    Devuelve dict o None.
+    """
+    try:
+        ts = int(time.time())
+        payload = {"status": "ok", "ts": ts}
+        # ejemplo de campos: SOC, battery voltage, load
+        try:
+            resp = inv.send_cmd("QPIGS2")
+            payload.update({"qpigs2": inv.parse_qpigs2(resp)})
+        except Exception:
+            logger.debug("No se pudo leer QPIGS2 para healthcheck")
+
+        try:
+            resp = inv.send_cmd("QPIGS")
+            parsed = inv.parse_qpigs(resp)
+            payload.update({
+                "battery_voltage": parsed.get("BatteryVoltage"),
+                "load_percentage": parsed.get("LoadPercentage"),
+                "ac_output_active_power": parsed.get("ACOutputActivePower"),
+            })
+        except Exception:
+            logger.debug("No se pudo leer QPIGS para healthcheck")
+
+        # si prefer_true == 'true' puedes intentar lecturas más 'completas' (marca/privilegios)
+        # aquí no hacemos nada extra por defecto; la lógica de fallback la gestiona el main
+        return payload
+    except Exception:
+        logger.exception("get_healthcheck() falló")
+        return None
+
+def get_settings(inv):
+    """
+    Lee QPIRI y devuelve dict con settings (o None).
+    """
+    try:
+        resp = inv.send_cmd("QPIRI")
+        return inv.parse_qpiri(resp)
+    except Exception:
+        logger.exception("get_settings() falló")
+        return None
+
+# ---------------- Main (réplica de tu main original) ----------------
+def main():
+    # Arranque aleatorio (evitar tormenta)
+    time.sleep(random.randint(0, 5))
+
+    # Conectar MQTT
+    try:
+        connect()
+    except Exception:
+        logger.error("Fallo al conectar MQTT, saliendo")
+        raise SystemExit(1)
+
+    # Abrir puerto serie / inversor
+    serial_port = os.environ.get("SERIAL_PORT", "/dev/ttyUSB0")
+    try:
+        inv = Inversor(port=serial_port)
+    except Exception:
+        logger.error("No se pudo abrir inversor en %s", serial_port)
+        raise SystemExit(1)
+
+    # obtener raw_sn como hacías antes
+    try:
+        raw_sn = inv.send_cmd('QID')
+    except Exception:
+        raw_sn = 'unknown'
+    sn = sanitize_id(raw_sn.strip())
+    logger.info("Reading from inverter %s (raw='%s')", sn, raw_sn)
+
+    # Intervalos (segundos) con env y fallback
+    try:
+        FAST_INTERVAL = int(os.environ.get("DATA_INTERVAL", 2))
+    except ValueError:
+        FAST_INTERVAL = 2
+    try:
+        HEALTH_INTERVAL = int(os.environ.get("HEALTH_INTERVAL", 20))
+    except ValueError:
+        HEALTH_INTERVAL = 20
+    try:
+        SLOW_INTERVAL = int(os.environ.get("SETTINGS_INTERVAL", 600))
+    except ValueError:
+        SLOW_INTERVAL = 600
+
+    logger.info("Intervals → FAST=%ss, HEALTH=%ss, SETTINGS=%ss", FAST_INTERVAL, HEALTH_INTERVAL, SLOW_INTERVAL)
+
+    last_fast = last_health = last_slow = 0.0
+
+    # topics base desde env
+    TOPIC_TEMPLATE = os.environ.get('MQTT_TOPIC', 'inverter/{sn}')
+    TOPIC_PARALLEL = os.environ.get('MQTT_TOPIC_PARALLEL', 'inverter/parallel')
+    TOPIC_SETTINGS = os.environ.get('MQTT_TOPIC_SETTINGS', 'inverter/settings')
+    TOPIC_HEALTH = os.environ.get('MQTT_HEALTHCHECK', 'inverter/health')
+
+    try:
+        while True:
+            nowm = time.monotonic()
+
+            # FAST
+            if nowm - last_fast >= FAST_INTERVAL:
+                last_fast = nowm
+                try:
+                    d = get_data(inv)
+                    if d:
+                        topic = TOPIC_TEMPLATE.replace('{sn}', sn)
+                        send_data(d, topic)
+                except Exception:
+                    logger.exception("Error en ciclo FAST -> get_data")
+
+                try:
+                    pv2 = get_qpigs2_json(inv)
+                    if pv2:
+                        topic2 = TOPIC_TEMPLATE.replace('{sn}', sn + '_pv2')
+                        send_data(pv2, topic2)
+                except Exception:
+                    logger.exception("Error en ciclo FAST -> qpigs2")
+
+                try:
+                    d = get_parallel_data(inv)
+                    if d:
+                        send_data(d, TOPIC_PARALLEL)
+                except Exception:
+                    logger.exception("Error en ciclo FAST -> parallel (qpgs0)")
+
+            # HEALTH
+            if nowm - last_health >= HEALTH_INTERVAL:
+                last_health = nowm
+                try:
+                    # primero intenta 'true'
+                    d = None
+                    try:
+                        d = get_healthcheck(inv, 'true')
+                        if d:
+                            send_data(d, TOPIC_HEALTH)
+                        else:
+                            raise Exception("healthcheck true devolvió None")
+                    except Exception as e_true:
+                        logger.debug("HealthCheck 'true' falló: %s. Intentando 'false'...", e_true)
+                        try:
+                            d = get_healthcheck(inv, 'false')
+                            if d:
+                                send_data(d, TOPIC_HEALTH)
+                        except Exception:
+                            logger.exception("Fallback healthcheck 'false' también falló")
+                except Exception:
+                    logger.exception("HealthCheck cycle error")
+
+            # SETTINGS (QPIRI)
+            if nowm - last_slow >= SLOW_INTERVAL:
+                last_slow = nowm
+                try:
+                    d = get_settings(inv)
+                    if d:
+                        send_data(d, TOPIC_SETTINGS)
+                except Exception:
+                    logger.exception("Error en ciclo SETTINGS (QPIRI)")
+
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        logger.info("Terminando por teclado")
+    except Exception:
+        logger.exception("Fallo en el bucle principal")
+    finally:
+        try:
+            if client:
+                client.loop_stop()
+                client.disconnect()
+        except Exception:
+            pass
+        try:
+            inv.ser.close()
+        except Exception:
+            pass
+
 if __name__ == "__main__":
-    inv = Inversor(port="/dev/ttyUSB0")
-    status = inv.get_status()
-    import json
-    print(json.dumps(status, indent=4))
+    main()

@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("axpert")
 
-# Throttle para logs repetitivos
+# Throttle para logs repetitivos (no saturar stdout)
 _last_log = {}
 def log_every(key: str, level: int, msg: str, every_s: float = 60.0):
     now = time.monotonic()
@@ -26,11 +26,11 @@ def log_every(key: str, level: int, msg: str, every_s: float = 60.0):
         _last_log[key] = now
         logger.log(level, msg)
 
-# ---------------- Constantes y Conexión MQTT ----------------
+# ----------------------------------------------------
 battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium' }
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
-charger_sources = {'0': 'utility first', '1': 'solar first', '2': 'solar + utility', '3': 'solar only' }
+charger_sources = {'0': 'utility first', '1': 'solar first', '2': 'solar + utility', '3': 'solar only'}
 machine_types = {'00': 'Grid tie', '01': 'Off Grid', '10': 'Hybrid'}
 topologies = {'0': 'transformerless', '1': 'transformer'}
 output_modes = {'0': 'single machine output', '1': 'parallel output', '2': 'Phase 1 of 3 Phase output', '3': 'Phase 2 of 3 Phase output', '4': 'Phase 3 of 3 Phase output'}
@@ -38,7 +38,8 @@ pv_ok_conditions = {'0': 'As long as one unit of inverters has connect PV, paral
 pv_power_balance = {'0': 'PV input max current will be the max charged current', '1': 'PV input max power will be the sum of the max charged power and loads power'}
 
 client = None
-DEBUG_RAW = False # Se puede poner True si necesitas ver bytes sin procesar
+
+def now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def connect():
     logger.info("[MQTT] Connecting…")
@@ -75,7 +76,10 @@ def send_data(data, topic):
         log_every("mqtt-error", logging.ERROR, f"[MQTT] publish failed: {e}", every_s=30.0)
         return 0
 
-# ---------- HID/Serie (Modo TTY) ----------
+# ---------- Serial/ttyUSB ----------
+DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
+BAUD = int(os.environ.get('BAUD', 2400))
+
 def _build_frame(cmd: str) -> bytes:
     xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
     cb = cmd.encode('ascii')
@@ -97,8 +101,6 @@ def _read_until_cr(fd: int, timeout_s: float = 5.0) -> bytes:
             if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                 time.sleep(0.01); continue
             raise
-    if DEBUG_RAW:
-        logger.debug(f"[RAW IN] bytes={len(r)} raw={r} hex={r.hex()}")
     return r
 
 def _flush_input(fd: int):
@@ -122,19 +124,11 @@ def _write_blocks8(fd: int, frame: bytes):
         os.write(fd, chunk)
 
 def serial_command(command: str):
-    """
-    Todos: probar one-shot → split-cr-padded → blocks8 (en ese orden).
-    EXCEPTO QPIGS2: usar split-cr-padded directamente.
-    """
-    DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
     frame = _build_frame(command)
     fd = None
     t0 = time.monotonic()
     writer_name = "n/a"
     try:
-        # **NOTA: Aquí falta la configuración TTY (termios) para /dev/ttyUSB0**
-        # Si tienes problemas, tendrás que instalar termios y añadir la configuración TTY.
-        # Mientras tanto, confiamos en la configuración predeterminada de Home Assistant / Docker.
         fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
         _flush_input(fd)
 
@@ -145,8 +139,8 @@ def serial_command(command: str):
             tried = []
             last_err = None
             for writer_name, writer in (("one-shot", _write_oneshot),
-                                         ("split-cr-padded", _write_split_cr_padded),
-                                         ("blocks8", _write_blocks8)):
+                                        ("split-cr-padded", _write_split_cr_padded),
+                                        ("blocks8", _write_blocks8)):
                 try:
                     _flush_input(fd)
                     writer(fd, frame)
@@ -160,14 +154,13 @@ def serial_command(command: str):
         resp = _read_until_cr(fd, timeout_s=5.0)
         dt = (time.monotonic() - t0) * 1000.0  # ms
 
-        # decodificamos solo para procesar
+        # Mostrar en bruto siempre
+        logger.info(f"[RAW SERIAL] {command} → {resp}")
+
         try:
             s = resp.decode('utf-8', errors='ignore')
         except Exception:
             s = resp.decode('iso-8859-1', errors='ignore')
-
-        if DEBUG_RAW:
-            logger.debug(f"[SERIAL] {command} via {writer_name} in {dt:.0f}ms bytes={len(resp)} decoded_preview='{s[:40]}'")
 
         b = s.find('('); e = s.find('\r')
         payload = s[b+1:e] if (b != -1 and e != -1 and e > b) else s.strip()
@@ -183,23 +176,37 @@ def serial_command(command: str):
             try: os.close(fd)
             except: pass
 
-# ---------- Lecturas de Datos (Reinsertadas) ----------
-def get_healthcheck(value):
-    try:
-        data = '{"Health":"OK"}' if value == 'true' else '{"Health":"NO OK"}'
-        logger.debug("[HEALTH] prepared payload")
-        return data
-    except Exception as e:
-        log_every("health-error", logging.ERROR, f"[HEALTH] build failed: {e}", every_s=30.0)
-        return ''
+# ---------- Lecturas ----------
+def get_data():
+    r = serial_command('QPIGS')
+    nums = r.split(' ')
+    data = '{'
+    if len(nums) >= 21:
+        data += '"BusVoltage":' + str(safe_number(nums[7]))
+        data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
+        data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
+        data += ',"PvInputCurrent":' + str(safe_number(nums[12]))
+        data += ',"PvInputVoltage":' + str(safe_number(nums[13]))
+        data += ',"PvInputPower":' + str(safe_number(nums[19]))
+        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
+        data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[15]))
+        data += ',"DeviceStatus":"' + nums[16] + '"}'
+    return data
+
+def get_qpigs2_json():
+    r = serial_command('QPIGS2')
+    parts = r.split()
+    if len(parts) >= 3:
+        pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
+        if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
+        return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
+    return ''
 
 def get_parallel_data():
-    try:
-        r = serial_command('QPGS0')
-        nums = r.split(' ')
-        if len(nums) < 27: 
-            log_every("qpgs0-short", logging.WARNING, f"[QPGS0] respuesta corta len={len(nums)} raw='{r[:40]}…'", 30.0)
-            return ''
+    r = serial_command('QPGS0')
+    nums = r.split(' ')
+    data = '{}'
+    if len(nums) >= 27:
         data = '{'
         data += '"Gridmode":' + ('1' if nums[2]=='L' else '0')
         data += ',"SerialNumber": ' + str(safe_number(nums[1]))
@@ -226,62 +233,13 @@ def get_parallel_data():
         data += ',"MaxAcChargerCurrent": ' + str(safe_number(nums[24]))
         data += ',"PvInputCurrentForBattery": ' + str(safe_number(nums[25]))
         data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') + '}'
-        logger.debug("[QPGS0] payload built")
-        return data
-    except Exception as e:
-        log_every("qpgs0-error", logging.ERROR, f"[QPGS0] error: {e}", every_s=10.0)
-        return ''
-
-def get_data():
-    try:
-        r = serial_command('QPIGS')
-        nums = r.split(' ')
-        if len(nums) < 21:
-            log_every("qpigs-short", logging.WARNING, f"[QPIGS] respuesta corta len={len(nums)} raw='{r[:40]}…'", 30.0)
-            return ''
-        data = '{'
-        data += '"BusVoltage":' + str(safe_number(nums[7]))
-        data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
-        data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
-        data += ',"PvInputCurrent":' + str(safe_number(nums[12]))
-        data += ',"PvInputVoltage":' + str(safe_number(nums[13]))
-        data += ',"PvInputPower":' + str(safe_number(nums[19]))
-        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
-        data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
-        data += ',"DeviceStatus":"' + nums[16] + '"}'
-        logger.debug("[QPIGS] payload built")
-        return data
-    except Exception as e:
-        log_every("qpigs-error", logging.ERROR, f"[QPIGS] error: {e}", every_s=10.0)
-        return ''
-
-def get_qpigs2_json():
-    try:
-        r = serial_command('QPIGS2')
-        parts = r.split()
-        if len(parts) >= 3:
-            try:
-                pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
-                if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
-                logger.debug(f"[QPIGS2] I={pv2_i}A V={pv2_v}V P={pv2_p}W")
-                return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
-            except Exception as pe:
-                log_every("qpigs2-parse", logging.WARNING, f"[QPIGS2] parse error: {pe} raw='{r[:40]}…'", 30.0)
-                return ''
-        else:
-            log_every("qpigs2-short", logging.WARNING, f"[QPIGS2] respuesta corta: '{r}'", 30.0)
-            return ''
-    except Exception as e:
-        log_every("qpigs2-error", logging.ERROR, f"[QPIGS2] error: {e}", every_s=10.0)
-        return ''
+    return data
 
 def get_settings():
-    try:
-        r = serial_command('QPIRI')
-        nums = r.split(' ')
-        if len(nums) < 21:
-            log_every("qpiri-short", logging.WARNING, f"[QPIRI] respuesta corta len={len(nums)} raw='{r[:40]}…'", 60.0)
-            return ''
+    r = serial_command('QPIRI')
+    nums = r.split(' ')
+    data = '{}'
+    if len(nums) >= 26:
         data = '{'
         data += '"AcInputVoltage":' + str(safe_number(nums[0]))
         data += ',"AcInputCurrent":' + str(safe_number(nums[1]))
@@ -309,15 +267,19 @@ def get_settings():
         data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
         data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25])) + '}'
-        logger.debug("[QPIRI] payload built")
+    return data
+
+def get_healthcheck(value):
+    try:
+        data = '{"Health":"OK"}' if value == 'true' else '{"Health":"NO OK"}'
+        logger.debug("[HEALTH] prepared payload")
         return data
     except Exception as e:
-        log_every("qpiri-error", logging.ERROR, f"[QPIRI] error: {e}", every_s=20.0)
+        log_every("health-error", logging.ERROR, f"[HEALTH] build failed: {e}", every_s=30.0)
         return ''
 
 # ---------- MAIN ----------
 def main():
-    # Arranque aleatorio (evitar tormenta)
     time.sleep(random.randint(0, 5))
     connect()
 
@@ -328,19 +290,9 @@ def main():
     sn = sanitize_id(raw_sn.strip())
     logger.info(f"Reading from inverter {sn} (raw='{raw_sn}')")
 
-    # Intervalos (segundos) con env y fallback
-    try:
-        FAST_INTERVAL      = int(os.environ.get("DATA_INTERVAL", 2))     # QPIGS / QPIGS2 / QPGS0
-    except ValueError:
-        FAST_INTERVAL      = 2
-    try:
-        HEALTH_INTERVAL    = int(os.environ.get("HEALTH_INTERVAL", 20))  # HealthCheck
-    except ValueError:
-        HEALTH_INTERVAL    = 20
-    try:
-        SLOW_INTERVAL      = int(os.environ.get("SETTINGS_INTERVAL", 600))  # QPIRI
-    except ValueError:
-        SLOW_INTERVAL      = 600
+    FAST_INTERVAL    = int(os.environ.get("DATA_INTERVAL", 2))
+    HEALTH_INTERVAL  = int(os.environ.get("HEALTH_INTERVAL", 20))
+    SLOW_INTERVAL    = int(os.environ.get("SETTINGS_INTERVAL", 600))
 
     logger.info(f"Intervals → FAST={FAST_INTERVAL}s, HEALTH={HEALTH_INTERVAL}s, SETTINGS={SLOW_INTERVAL}s")
 

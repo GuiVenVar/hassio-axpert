@@ -26,7 +26,7 @@ def log_every(key: str, level: int, msg: str, every_s: float = 60.0):
         _last_log[key] = now
         logger.log(level, msg)
 
-# ----------------------------------------------------
+# ---------------- Constantes y Conexión MQTT ----------------
 battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium' }
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
@@ -38,8 +38,6 @@ pv_ok_conditions = {'0': 'As long as one unit of inverters has connect PV, paral
 pv_power_balance = {'0': 'PV input max current will be the max charged current', '1': 'PV input max power will be the sum of the max charged power and loads power'}
 
 client = None
-
-def now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def connect():
     logger.info("[MQTT] Connecting…")
@@ -76,9 +74,10 @@ def send_data(data, topic):
         log_every("mqtt-error", logging.ERROR, f"[MQTT] publish failed: {e}", every_s=30.0)
         return 0
 
-# ---------- Serial/ttyUSB ----------
+# ---------- Serial/ttyUSB (Método original de bajo nivel) ----------
 DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
 BAUD = int(os.environ.get('BAUD', 2400))
+# NOTA: Los comandos de lectura/escritura usan os.open/os.write, que es el método original de tu addon.
 
 def _build_frame(cmd: str) -> bytes:
     xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
@@ -139,8 +138,8 @@ def serial_command(command: str):
             tried = []
             last_err = None
             for writer_name, writer in (("one-shot", _write_oneshot),
-                                        ("split-cr-padded", _write_split_cr_padded),
-                                        ("blocks8", _write_blocks8)):
+                                         ("split-cr-padded", _write_split_cr_padded),
+                                         ("blocks8", _write_blocks8)):
                 try:
                     _flush_input(fd)
                     writer(fd, frame)
@@ -154,13 +153,17 @@ def serial_command(command: str):
         resp = _read_until_cr(fd, timeout_s=5.0)
         dt = (time.monotonic() - t0) * 1000.0  # ms
 
-        # Mostrar en bruto siempre
         logger.info(f"[RAW SERIAL] {command} → {resp}")
 
         try:
-            s = resp.decode('utf-8', errors='ignore')
+            s = resp.decode('utf-8', errors='ignore').strip()
         except Exception:
-            s = resp.decode('iso-8859-1', errors='ignore')
+            s = resp.decode('iso-8859-1', errors='ignore').strip()
+
+        # 🚨 CORRECCIÓN NAK: Maneja la respuesta de error del inversor (NAKss)
+        if s.startswith('(NAK'):
+            logger.warning(f"[SERIAL] {command} recibió NAK. (No soportado o error de comando)")
+            return '' # Retorna cadena vacía para que el parseo de datos no falle
 
         b = s.find('('); e = s.find('\r')
         payload = s[b+1:e] if (b != -1 and e != -1 and e > b) else s.strip()
@@ -176,12 +179,13 @@ def serial_command(command: str):
             try: os.close(fd)
             except: pass
 
-# ---------- Lecturas ----------
+# ---------- Lecturas de Datos ----------
 def get_data():
     r = serial_command('QPIGS')
     nums = r.split(' ')
-    data = '{'
+    data = '{}'
     if len(nums) >= 21:
+        data = '{'
         data += '"BusVoltage":' + str(safe_number(nums[7]))
         data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
         data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
@@ -280,6 +284,7 @@ def get_healthcheck(value):
 
 # ---------- MAIN ----------
 def main():
+    # Arranque aleatorio (evitar tormenta)
     time.sleep(random.randint(0, 5))
     connect()
 
@@ -290,9 +295,19 @@ def main():
     sn = sanitize_id(raw_sn.strip())
     logger.info(f"Reading from inverter {sn} (raw='{raw_sn}')")
 
-    FAST_INTERVAL    = int(os.environ.get("DATA_INTERVAL", 2))
-    HEALTH_INTERVAL  = int(os.environ.get("HEALTH_INTERVAL", 20))
-    SLOW_INTERVAL    = int(os.environ.get("SETTINGS_INTERVAL", 600))
+    # Intervalos (segundos) con env y fallback
+    try:
+        FAST_INTERVAL      = int(os.environ.get("DATA_INTERVAL", 2))
+    except ValueError:
+        FAST_INTERVAL      = 2
+    try:
+        HEALTH_INTERVAL    = int(os.environ.get("HEALTH_INTERVAL", 20))
+    except ValueError:
+        HEALTH_INTERVAL    = 20
+    try:
+        SLOW_INTERVAL      = int(os.environ.get("SETTINGS_INTERVAL", 600))
+    except ValueError:
+        SLOW_INTERVAL      = 600
 
     logger.info(f"Intervals → FAST={FAST_INTERVAL}s, HEALTH={HEALTH_INTERVAL}s, SETTINGS={SLOW_INTERVAL}s")
 

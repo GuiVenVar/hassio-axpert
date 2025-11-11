@@ -1,21 +1,26 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.25-GVENTURA",
+  "version": "0.5.26-GVENTURA",
   "slug": "axpert_hid",
   "description": "Monitors an axpert inverter with HID support",
-  "arch": ["amd64", "armv7"],
+  "arch": [
+    "amd64",
+    "armv7"
+  ],
   "startup": "application",
   "boot": "auto",
   "init": true,
-
-  "privileged": ["SYS_RAWIO"],
-
-  "devices": [      
+  "privileged": [
+    "SYS_RAWIO",
+    "SYS_ADMIN",
+    "MKNOD",
+    "DAC_READ_SEARCH"
+  ],
+  "devices": [
     "/dev/hidraw0:/dev/hidraw0:rwm",
     "/dev/hidraw1:/dev/hidraw1:rwm",
-    "/dev/ttyUSB0:/dev/ttyUSB0:rwm"  
+    "/dev/ttyUSB0:/dev/ttyUSB0:rwm"
   ],
-
   "options": {
     "mqtt_server": "192.168.1.86",
     "mqtt_user": "mqtt-voltronic",
@@ -27,11 +32,10 @@
     "mqtt_healthCheck": "axpert/healthCheck",
     "device": "/dev/ttyUSB0",
     "data_interval": 2,
-    "settings_interval":600,
-    "health_interval":20,
+    "settings_interval": 600,
+    "health_interval": 20,
     "poll_interval": "1"
   },
-
   "schema": {
     "mqtt_server": "str",
     "mqtt_user": "str",

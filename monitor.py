@@ -77,7 +77,6 @@ def send_data(data, topic):
 # ---------- Serial/ttyUSB (Método original de bajo nivel) ----------
 DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
 BAUD = int(os.environ.get('BAUD', 2400))
-# NOTA: Los comandos de lectura/escritura usan os.open/os.write, que es el método original de tu addon.
 
 def _build_frame(cmd: str) -> bytes:
     xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
@@ -160,7 +159,7 @@ def serial_command(command: str):
         except Exception:
             s = resp.decode('iso-8859-1', errors='ignore').strip()
 
-        # 🚨 CORRECCIÓN NAK: Maneja la respuesta de error del inversor (NAKss)
+        # CORRECCIÓN NAK: Maneja la respuesta de error del inversor (NAKss)
         if s.startswith('(NAK'):
             logger.warning(f"[SERIAL] {command} recibió NAK. (No soportado o error de comando)")
             return '' # Retorna cadena vacía para que el parseo de datos no falle
@@ -199,11 +198,22 @@ def get_data():
 
 def get_qpigs2_json():
     r = serial_command('QPIGS2')
+    if not r: # Maneja la cadena vacía si serial_command devolvió NAK
+        return ''
+        
+    # 🚨 CORRECCIÓN PARSING: Eliminamos el paréntesis inicial si existe
+    if r.startswith('('):
+        r = r[1:]
+        
     parts = r.split()
     if len(parts) >= 3:
-        pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
-        if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
-        return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
+        try:
+            pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
+            if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
+            return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
+        except Exception as pe:
+            log_every("qpigs2-parse", logging.WARNING, f"[QPIGS2] parse error: {pe} raw='{r[:40]}…'", 30.0)
+            return ''
     return ''
 
 def get_parallel_data():
@@ -363,4 +373,4 @@ def main():
         time.sleep(0.1)
 
 if __name__ == '__main__':
-    main() 
+    main()

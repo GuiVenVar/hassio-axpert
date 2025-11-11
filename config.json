@@ -12,9 +12,7 @@
   "init": true,
   "privileged": [
     "SYS_RAWIO",
-    "SYS_ADMIN",
-    "MKNOD",
-    "DAC_READ_SEARCH"
+    "SYS_ADMIN"
   ],
   "devices": [
     "/dev/hidraw0:/dev/hidraw0:rwm",

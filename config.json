@@ -8,7 +8,7 @@
   "boot": "auto",
   "init": true,
 
-  "privileged": true,
+  "privileged": ["SYS_RAWIO"],
 
   "devices": [      
     "/dev/hidraw0:/dev/hidraw0:rwm",

@@ -7,6 +7,22 @@ import logging
 import serial
 import paho.mqtt.client as mqtt
 
+battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium' }
+voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
+output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
+charger_sources = {'0': 'utility first', '1': 'solar first', '2': 'solar + utility', '3': 'solar only'}
+machine_types = {'00': 'Grid tie', '01': 'Off Grid', '10': 'Hybrid'}
+topologies = {'0': 'transformerless', '1': 'transformer'}
+output_modes = {'0': 'single machine output', '1': 'parallel output', '2': 'Phase 1 of 3 Phase output', '3': 'Phase 2 of 3 Phase output', '4': 'Phase 3 of 3 Phase output'}
+pv_ok_conditions = {'0': 'As long as one unit of inverters has connect PV, parallel system will consider PV OK', '1': 'Only All of inverters have connect PV, parallel system will consider PV OK'}
+pv_power_balance = {'0': 'PV input max current will be the max charged current', '1': 'PV input max power will be the sum of the max charged power and loads power'}
+
+def map_with_log(table: dict, value: str, label: str) -> str:
+    if value in table: return table[value]
+    print(f"[get_settings] Valor inesperado en {label}: {value} (claves válidas: {list(table.keys())})")
+    return f"{label}_invalid({value})"
+
+
 # ---------------- Logger ----------------
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "DEBUG"))
 logger = logging.getLogger("inverter-monitor")
@@ -83,6 +99,8 @@ def sanitize_id(raw):
 
 # ---------------- Inversor (serial) ----------------
 class Inversor:
+
+
     def __init__(self, port="/dev/ttyUSB0", baudrate=2400, timeout=1):
         self.port = port
         try:
@@ -98,37 +116,84 @@ class Inversor:
         resp = self.ser.readline()
         return resp.decode('ascii', errors='ignore').strip()
 
+
     # Parsers devuelven dict (robustos)
     def parse_qpigs(self, resp):
-        nums = resp.strip('()').split()
-        nums = nums + [''] * 12
+        """
+        Devuelve exactamente los mismos campos que el parseo HID original.
+        """
+        if not resp:
+            return {}
+
+        s = resp.strip()
+        if s.startswith('(') and s.endswith(')'):
+            s = s[1:-1]
+
+        nums = s.split()
+        if len(nums) < 20:
+            nums += [''] * (20 - len(nums))
+
         return {
-            "ACInputVoltage": safe_number(nums[0]),
-            "ACInputFrequency": safe_number(nums[1]),
-            "ACOutputVoltage": safe_number(nums[2]),
-            "ACOutputFrequency": safe_number(nums[3]),
-            "ACOutputApparentPower": safe_number(nums[4]),
-            "ACOutputActivePower": safe_number(nums[5]),
-            "LoadPercentage": safe_number(nums[6]),
             "BusVoltage": safe_number(nums[7]),
-            "BatteryVoltage": safe_number(nums[8]),
-            "BatteryChargeCurrent": safe_number(nums[9]),
-            "BatteryCapacity": safe_number(nums[10]),
-            "PVInputCurrent": safe_number(nums[11]),
+            "InverterHeatsinkTemperature": safe_number(nums[11]),
+            "BatteryVoltageFromScc": safe_number(nums[14]),
+            "PvInputCurrent": safe_number(nums[12]),
+            "PvInputVoltage": safe_number(nums[13]),
+            "PvInputPower": safe_number(nums[19]),
+            "BatteryChargingCurrent": safe_number(nums[9]),
+            "BatteryDischargeCurrent": safe_number(nums[15]),
+            "DeviceStatus": nums[16] if len(nums) > 16 else "",
         }
 
+
     def parse_qpigs2(self, resp):
-        nums = resp.strip('()').split()
-        nums = nums + [''] * 3
+        """
+        Devuelve exactamente los mismos campos que get_qpigs2_json:
+        Pv2InputCurrent, Pv2InputVoltage y Pv2InputPower.
+        """
+        if not resp:
+            return {}
+
+        # limpiar y dividir la respuesta
+        s = resp.strip().strip('()')
+        parts = s.split()
+        if len(parts) < 3:
+            return {}
+
+        # convertir con safe_number (como en tu otro parser)
+        pv2_i = safe_number(parts[0])
+        pv2_v = safe_number(parts[1])
+        pv2_p = safe_number(parts[2])
+
+        # si el inversor devuelve 0 en potencia, la calculamos
+        if pv2_p is None or pv2_p <= 0:
+            if pv2_i is not None and pv2_v is not None:
+                pv2_p = round(pv2_v * pv2_i, 1)
+            else:
+                pv2_p = None
+
         return {
-            "PVVoltage": safe_number(nums[0]),
-            "BatterySOC": safe_number(nums[1]),
-            "BatteryTemperature": safe_number(nums[2]),
+            "Pv2InputCurrent": pv2_i,
+            "Pv2InputVoltage": pv2_v,
+            "Pv2InputPower": pv2_p,
         }
 
     def parse_qpgs0(self, resp):
-        nums = resp.strip('()').split()
-        nums = nums + [''] * 30
+        """
+        Devuelve un dict con los mismos campos que antes.
+        """
+        if not resp:
+            return {}
+
+        s = resp.strip()
+        if s.startswith('(') and s.endswith(')'):
+            s = s[1:-1]
+
+        nums = s.split()
+        # pad hasta 30 para cubrir índices usados
+        if len(nums) < 30:
+            nums += [''] * (30 - len(nums))
+
         return {
             "Gridmode": 1 if (len(nums) > 2 and nums[2] == 'L') else 0,
             "SerialNumber": safe_number(nums[1]),
@@ -157,18 +222,37 @@ class Inversor:
             "Solarmode": 1 if (len(nums) > 2 and nums[2] == 'B') else 0,
         }
 
-    def parse_qpiri(self, resp):
-        nums = resp.strip('()').split()
-        nums = nums + [''] * 10
-        return {
-            "ACNominalVoltage": safe_number(nums[0]),
-            "ACNominalFrequency": safe_number(nums[1]),
-            "MaxChargeCurrent": safe_number(nums[5]),
-            "MaxDischargeCurrent": safe_number(nums[6]),
-            "BatteryNominalVoltage": safe_number(nums[7]),
-            "PVInputVoltageMin": safe_number(nums[8]),
-            "PVInputVoltageMax": safe_number(nums[9]),
-        }
+def parse_qpiri(self, resp):
+    nums = resp.strip('()').split()
+    nums = nums + [''] * 30  # relleno por seguridad
+    return {
+        "AcInputVoltage": safe_number(nums[0]),
+        "AcInputCurrent": safe_number(nums[1]),
+        "AcOutputVoltage": safe_number(nums[2]),
+        "AcOutputFrequency": safe_number(nums[3]),
+        "AcOutputCurrent": safe_number(nums[4]),
+        "AcOutputApparentPower": safe_number(nums[5]),
+        "AcOutputActivePower": safe_number(nums[6]),
+        "BatteryVoltage": safe_number(nums[7]),
+        "BatteryRechargeVoltage": safe_number(nums[8]),
+        "BatteryUnderVoltage": safe_number(nums[9]),
+        "BatteryBulkVoltage": safe_number(nums[10]),
+        "BatteryFloatVoltage": safe_number(nums[11]),
+        "BatteryType": map_with_log(battery_types, nums[12], "BatteryType"),
+        "MaxAcChargingCurrent": safe_number(nums[13]),
+        "MaxChargingCurrent": safe_number(nums[14]),
+        "InputVoltageRange": map_with_log(voltage_ranges, nums[15], "InputVoltageRange"),
+        "OutputSourcePriority": map_with_log(output_sources, nums[16], "OutputSourcePriority"),
+        "ChargerSourcePriority": map_with_log(charger_sources, nums[17], "ChargerSourcePriority"),
+        "MaxParallelUnits": safe_number(nums[18]),
+        "MachineType": map_with_log(machine_types, nums[19], "MachineType"),
+        "Topology": map_with_log(topologies, nums[20], "Topology"),
+        "OutputMode": map_with_log(output_modes, nums[21], "OutputMode"),
+        "BatteryRedischargeVoltage": safe_number(nums[22]),
+        "PvOkCondition": map_with_log(pv_ok_conditions, nums[23], "PvOkCondition"),
+        "PvPowerBalance": map_with_log(pv_power_balance, nums[24], "PvPowerBalance"),
+        "MaxBatteryCvChargingTime": safe_number(nums[25]),
+    }
 
 # ---------------- Funciones que replican tu código anterior ----------------
 

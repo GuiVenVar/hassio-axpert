@@ -222,37 +222,37 @@ class Inversor:
             "Solarmode": 1 if (len(nums) > 2 and nums[2] == 'B') else 0,
         }
 
-def parse_qpiri(self, resp):
-    nums = resp.strip('()').split()
-    nums = nums + [''] * 30  # relleno por seguridad
-    return {
-        "AcInputVoltage": safe_number(nums[0]),
-        "AcInputCurrent": safe_number(nums[1]),
-        "AcOutputVoltage": safe_number(nums[2]),
-        "AcOutputFrequency": safe_number(nums[3]),
-        "AcOutputCurrent": safe_number(nums[4]),
-        "AcOutputApparentPower": safe_number(nums[5]),
-        "AcOutputActivePower": safe_number(nums[6]),
-        "BatteryVoltage": safe_number(nums[7]),
-        "BatteryRechargeVoltage": safe_number(nums[8]),
-        "BatteryUnderVoltage": safe_number(nums[9]),
-        "BatteryBulkVoltage": safe_number(nums[10]),
-        "BatteryFloatVoltage": safe_number(nums[11]),
-        "BatteryType": map_with_log(battery_types, nums[12], "BatteryType"),
-        "MaxAcChargingCurrent": safe_number(nums[13]),
-        "MaxChargingCurrent": safe_number(nums[14]),
-        "InputVoltageRange": map_with_log(voltage_ranges, nums[15], "InputVoltageRange"),
-        "OutputSourcePriority": map_with_log(output_sources, nums[16], "OutputSourcePriority"),
-        "ChargerSourcePriority": map_with_log(charger_sources, nums[17], "ChargerSourcePriority"),
-        "MaxParallelUnits": safe_number(nums[18]),
-        "MachineType": map_with_log(machine_types, nums[19], "MachineType"),
-        "Topology": map_with_log(topologies, nums[20], "Topology"),
-        "OutputMode": map_with_log(output_modes, nums[21], "OutputMode"),
-        "BatteryRedischargeVoltage": safe_number(nums[22]),
-        "PvOkCondition": map_with_log(pv_ok_conditions, nums[23], "PvOkCondition"),
-        "PvPowerBalance": map_with_log(pv_power_balance, nums[24], "PvPowerBalance"),
-        "MaxBatteryCvChargingTime": safe_number(nums[25]),
-    }
+    def parse_qpiri(self, resp):
+        nums = resp.strip('()').split()
+        nums = nums + [''] * 30  # relleno por seguridad
+        return {
+            "AcInputVoltage": safe_number(nums[0]),
+            "AcInputCurrent": safe_number(nums[1]),
+            "AcOutputVoltage": safe_number(nums[2]),
+            "AcOutputFrequency": safe_number(nums[3]),
+            "AcOutputCurrent": safe_number(nums[4]),
+            "AcOutputApparentPower": safe_number(nums[5]),
+            "AcOutputActivePower": safe_number(nums[6]),
+            "BatteryVoltage": safe_number(nums[7]),
+            "BatteryRechargeVoltage": safe_number(nums[8]),
+            "BatteryUnderVoltage": safe_number(nums[9]),
+            "BatteryBulkVoltage": safe_number(nums[10]),
+            "BatteryFloatVoltage": safe_number(nums[11]),
+            "BatteryType": map_with_log(battery_types, nums[12], "BatteryType"),
+            "MaxAcChargingCurrent": safe_number(nums[13]),
+            "MaxChargingCurrent": safe_number(nums[14]),
+            "InputVoltageRange": map_with_log(voltage_ranges, nums[15], "InputVoltageRange"),
+            "OutputSourcePriority": map_with_log(output_sources, nums[16], "OutputSourcePriority"),
+            "ChargerSourcePriority": map_with_log(charger_sources, nums[17], "ChargerSourcePriority"),
+            "MaxParallelUnits": safe_number(nums[18]),
+            "MachineType": map_with_log(machine_types, nums[19], "MachineType"),
+            "Topology": map_with_log(topologies, nums[20], "Topology"),
+            "OutputMode": map_with_log(output_modes, nums[21], "OutputMode"),
+            "BatteryRedischargeVoltage": safe_number(nums[22]),
+            "PvOkCondition": map_with_log(pv_ok_conditions, nums[23], "PvOkCondition"),
+            "PvPowerBalance": map_with_log(pv_power_balance, nums[24], "PvPowerBalance"),
+            "MaxBatteryCvChargingTime": safe_number(nums[25]),
+        }
 
 # ---------------- Funciones que replican tu código anterior ----------------
 

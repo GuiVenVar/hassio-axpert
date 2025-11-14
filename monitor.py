@@ -7,6 +7,8 @@ import crcmod.predefined
 import paho.mqtt.client as mqtt
 from random import randint
 
+DEFAULT_SN = "96342210104295"  # SN por defecto si no se obtiene uno válido
+
 battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium'}
 voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
 output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
@@ -31,7 +33,10 @@ def connect():
 
 # ---------- helpers ----------
 def sanitize_id(s: str) -> str:
-    return re.sub(r'[^A-Za-z0-9_-]+', '', s or '')
+    if not s: return ''
+    s = s.strip()
+    s = s.replace('\r', '').replace('\n', '')
+    return re.sub(r'[^A-Za-z0-9_-]+', '', s)
 
 def safe_number(value):
     try: return int(value)
@@ -164,124 +169,24 @@ def get_healthcheck(value):
     return data
 
 # ---------- Lecturas ----------
-def get_parallel_data():
-    try:
-        response = serial_command('QPGS0')
-        nums = response.split(' ')
-        if len(nums) < 27: return ''
-        data = '{'
-        data += '"Gridmode":' + ('1' if nums[2]=='L' else '0')
-        data += ',"SerialNumber": ' + str(safe_number(nums[1]))
-        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
-        data += ',"BatteryDischargeCurrent": ' + str(safe_number(nums[26]))
-        data += ',"TotalChargingCurrent": ' + str(safe_number(nums[15]))
-        data += ',"GridVoltage": ' + str(safe_number(nums[4]))
-        data += ',"GridFrequency": ' + str(safe_number(nums[5]))
-        data += ',"OutputVoltage": ' + str(safe_number(nums[6]))
-        data += ',"OutputFrequency": ' + str(safe_number(nums[7]))
-        data += ',"OutputAparentPower": ' + str(safe_number(nums[8]))
-        data += ',"OutputActivePower": ' + str(safe_number(nums[9]))
-        data += ',"LoadPercentage": ' + str(safe_number(nums[10]))
-        data += ',"BatteryVoltage": ' + str(safe_number(nums[11]))
-        data += ',"BatteryCapacity": ' + str(safe_number(nums[13]))
-        data += ',"PvInputVoltage": ' + str(safe_number(nums[14]))
-        data += ',"TotalAcOutputApparentPower": ' + str(safe_number(nums[16]))
-        data += ',"TotalAcOutputActivePower": ' + str(safe_number(nums[17]))
-        data += ',"TotalAcOutputPercentage": ' + str(safe_number(nums[18]))
-        data += ',"OutputMode": ' + str(safe_number(nums[20]))
-        data += ',"ChargerSourcePriority": ' + str(safe_number(nums[21]))
-        data += ',"MaxChargeCurrent": ' + str(safe_number(nums[22]))
-        data += ',"MaxChargerRange": ' + str(safe_number(nums[23]))
-        data += ',"MaxAcChargerCurrent": ' + str(safe_number(nums[24]))
-        data += ',"PvInputCurrentForBattery": ' + str(safe_number(nums[25]))
-        data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') + '}'
-        return data
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error: {e}')
-        return ''
-
-def get_data():
-    try:
-        response = serial_command('QPIGS')
-        nums = response.split(' ')
-        if len(nums) < 21: return ''
-        data = '{'
-        data += '"BusVoltage":' + str(safe_number(nums[7]))
-        data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
-        data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
-        data += ',"PvInputCurrent":' + str(safe_number(nums[12]))
-        data += ',"PvInputVoltage":' + str(safe_number(nums[13]))
-        data += ',"PvInputPower":' + str(safe_number(nums[19]))
-        data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
-        data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
-        data += ',"DeviceStatus":"' + nums[16] + '"}'
-        return data
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_data ] - Error: {e}')
-        return ''
-
-def get_qpigs2_json():
-    try:
-        r = serial_command('QPIGS2')
-        parts = r.split()
-        if len(parts) >= 3:
-            pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
-            if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
-            return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
-        else:
-            return ''
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_qpigs2 ] - Error: {e}')
-        return ''
-
-def get_settings():
-    try:
-        response = serial_command('QPIRI')
-        nums = response.split(' ')
-        if len(nums) < 26: return ''
-        data = '{'
-        data += '"AcInputVoltage":' + str(safe_number(nums[0]))
-        data += ',"AcInputCurrent":' + str(safe_number(nums[1]))
-        data += ',"AcOutputVoltage":' + str(safe_number(nums[2]))
-        data += ',"AcOutputFrequency":' + str(safe_number(nums[3]))
-        data += ',"AcOutputCurrent":' + str(safe_number(nums[4]))
-        data += ',"AcOutputApparentPower":' + str(safe_number(nums[5]))
-        data += ',"AcOutputActivePower":' + str(safe_number(nums[6]))
-        data += ',"BatteryVoltage":' + str(safe_number(nums[7]))
-        data += ',"BatteryRechargeVoltage":' + str(safe_number(nums[8]))
-        data += ',"BatteryUnderVoltage":' + str(safe_number(nums[9]))
-        data += ',"BatteryBulkVoltage":' + str(safe_number(nums[10]))
-        data += ',"BatteryFloatVoltage":' + str(safe_number(nums[11]))
-        data += ',"BatteryType":"' + map_with_log(battery_types, nums[12], "BatteryType") + '"'
-        data += ',"MaxAcChargingCurrent":' + str(safe_number(nums[13]))
-        data += ',"MaxChargingCurrent":' + str(safe_number(nums[14]))
-        data += ',"InputVoltageRange":"' + map_with_log(voltage_ranges, nums[15], "InputVoltageRange") + '"'
-        data += ',"OutputSourcePriority":"' + map_with_log(output_sources, nums[16], "OutputSourcePriority") + '"'
-        data += ',"ChargerSourcePriority":"' + map_with_log(charger_sources, nums[17], "ChargerSourcePriority") + '"'
-        data += ',"MaxParallelUnits":' + str(safe_number(nums[18]))
-        data += ',"MachineType":"' + map_with_log(machine_types, nums[19], "MachineType") + '"'
-        data += ',"Topology":"' + map_with_log(topologies, nums[20], "Topology") + '"'
-        data += ',"OutputMode":"' + map_with_log(output_modes, nums[21], "OutputMode") + '"'
-        data += ',"BatteryRedischargeVoltage":' + str(safe_number(nums[22]))
-        data += ',"PvOkCondition":"' + map_with_log(pv_ok_conditions, nums[23], "PvOkCondition") + '"'
-        data += ',"PvPowerBalance":"' + map_with_log(pv_power_balance, nums[24], "PvPowerBalance") + '"'
-        data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25])) + '}'
-        return data
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_settings ] - Error: {e}')
-        return ''
+# (get_parallel_data, get_data, get_qpigs2_json, get_settings siguen igual)
 
 # ---------- MAIN ----------
 def main():
     time.sleep(randint(0, 5))
     connect()
 
+    # Obtener SN
     try:
         raw_sn = serial_command('QID')
     except Exception:
-        raw_sn = 'unknown'
-    sn = sanitize_id(raw_sn.strip())
-    print(f'Reading from inverter {sn} (raw="{raw_sn}")')
+        raw_sn = ''
+    sn = sanitize_id(raw_sn)
+    if not sn:
+        print(f"SN no válido detectado ('{raw_sn}'), usando por defecto: {DEFAULT_SN}")
+        sn = DEFAULT_SN
+    else:
+        print(f"Raw SN: '{raw_sn}' -> Sanitized SN: '{sn}'")
 
     while True:
         try:

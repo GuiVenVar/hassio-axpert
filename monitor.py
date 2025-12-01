@@ -278,7 +278,8 @@ def main():
 
     sn = '96342210104295'
 
-    while True:
+    while True:        
+        print(' ** Init Sequence ** ')
         try:
             # HealthCheck
             d = get_healthcheck('true')
@@ -315,6 +316,8 @@ def main():
             if d: send_data(d, os.environ['MQTT_HEALTHCHECK'])
             print("Error occurred:", e)
             time.sleep(10)
+            
+        print('   ')
 
 if __name__ == '__main__':
     main()

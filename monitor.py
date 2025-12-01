@@ -276,12 +276,7 @@ def main():
     time.sleep(randint(0, 5))
     connect()
 
-    try:
-        raw_sn = '96342210104295'
-    except Exception:
-        raw_sn = '96342210104295'
-    sn = sanitize_id(raw_sn.strip())
-    print(f'Reading from inverter {sn} (raw="{raw_sn}")')
+    sn = '96342210104295'
 
     while True:
         try:

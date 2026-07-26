@@ -22,12 +22,13 @@ client = None
 def now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def connect():
-    print(f'\n\n\n[{now()}] - [monitor.py] - [ MQTT Connect ]: INIT')
+    print(f'\n[{now()}] - [monitor.py] - [ MQTT Connect ]: INIT')
     global client
-    client = mqtt.Client(client_id=os.environ['MQTT_CLIENT_ID'])
+    client = mqtt.Client(client_id=os.environ.get('MQTT_CLIENT_ID', 'axpert_monitor'))
     client.username_pw_set(os.environ['MQTT_USER'], os.environ['MQTT_PASS'])
     client.connect(os.environ['MQTT_SERVER'])
-    print(os.environ['DEVICE'])
+    client.loop_start()  # Habilita reconexión automática y gestión de red en segundo plano
+    print(f"Dispositivo configurado: {os.environ.get('DEVICE')}")
 
 # ---------- helpers ----------
 def sanitize_id(s: str) -> str:
@@ -46,7 +47,8 @@ def map_with_log(table: dict, value: str, label: str) -> str:
 
 def send_data(data, topic):
     try:
-        client.publish(topic, data, 0, True)
+        if client:
+            client.publish(topic, data, 0, True)
     except Exception as e:
         print(f'[{now()}] - [monitor.py] - [ send_data ] - Error sending to MQTT...: {e}')
         return 0
@@ -106,7 +108,6 @@ def _write_blocks8(fd: int, frame: bytes):
 def serial_command(command: str):
     DEVICE = os.environ['DEVICE']
     frame = _build_frame(command)
-    print(f"[{now()}] - [monitor.py] - [ serial_command ]: Command: " + command)
     fd = None
     try:
         fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
@@ -138,30 +139,23 @@ def serial_command(command: str):
         except UnicodeDecodeError:
             s = resp.decode('iso-8859-1')
 
-        print(s)
-        print(f"[{now()}] - [monitor.py] - [ serial_command ]: END ({writer_name})\n")
-
         b = s.find('('); e = s.find('\r')
         payload = s[b+1:e] if (b != -1 and e != -1 and e > b) else s.strip()
-        os.close(fd)
         return payload
 
     except Exception as e:
-        print(f"[{now()}] - [monitor.py] - [ serial_command ] - Error: {e}")
-        if fd is not None:
-            try: os.close(fd)
-            except: pass
+        print(f"[{now()}] - [monitor.py] - [ serial_command ] - Error con comando {command}: {e}")
         raise
+    finally:
+        # FIX CRÍTICO: Garantiza el cierre del file descriptor SIEMPRE
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
 
 def get_healthcheck(value):
-    try:
-        data = '{'
-        data += '"Health": "OK"' if value == 'true' else '"Health": "NO OK"'
-        data += '}'
-    except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_healthcheck ] - Error: {e}')
-        return ''
-    return data
+    return '{"Health": "OK"}' if value == 'true' else '{"Health": "NO OK"}'
 
 # ---------- Lecturas ----------
 def get_parallel_data():
@@ -197,7 +191,7 @@ def get_parallel_data():
         data += ',"Solarmode":' + ('1' if nums[2]=='B' else '0') + '}'
         return data
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_parallel_data ] - Error: {e}')
+        print(f'[{now()}] - [get_parallel_data] - Error: {e}')
         return ''
 
 def get_data():
@@ -217,7 +211,7 @@ def get_data():
         data += ',"DeviceStatus":"' + nums[16] + '"}'
         return data
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_data ] - Error: {e}')
+        print(f'[{now()}] - [get_data] - Error: {e}')
         return ''
 
 def get_qpigs2_json():
@@ -228,10 +222,9 @@ def get_qpigs2_json():
             pv2_i = float(parts[0]); pv2_v = float(parts[1]); pv2_p = float(parts[2])
             if pv2_p <= 0: pv2_p = round(pv2_v * pv2_i, 1)
             return '{' + f'"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v}, "Pv2InputPower": {pv2_p}' + '}'
-        else:
-            return ''
+        return ''
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_qpigs2 ] - Error: {e}')
+        print(f'[{now()}] - [get_qpigs2] - Error: {e}')
         return ''
 
 def get_settings():
@@ -268,7 +261,7 @@ def get_settings():
         data += ',"MaxBatteryCvChargingTime":' + str(safe_number(nums[25])) + '}'
         return data
     except Exception as e:
-        print(f'[{now()}] - [monitor.py] - [ get_settings ] - Error: {e}')
+        print(f'[{now()}] - [get_settings] - Error: {e}')
         return ''
 
 # ---------- MAIN ----------
@@ -278,46 +271,44 @@ def main():
 
     sn = '96342210104295'
 
-    while True:        
-        print(' ** Init Sequence ** ')
+    while True:       
         try:
             # HealthCheck
             d = get_healthcheck('true')
-            if d: send_data(d, os.environ['MQTT_HEALTHCHECK'])
+            if d: send_data(d, os.environ.get('MQTT_HEALTHCHECK', 'axpert/health'))
             time.sleep(1)
 
             # QPGS0
             d = get_parallel_data()
-            if d: send_data(d, os.environ['MQTT_TOPIC_PARALLEL'])
+            if d: send_data(d, os.environ.get('MQTT_TOPIC_PARALLEL', 'axpert/parallel'))
             time.sleep(1)
 
             # QPIGS
             d = get_data()
-            if d: send_data(d, os.environ['MQTT_TOPIC'].replace('{sn}', sn))
+            if d: 
+                topic = os.environ.get('MQTT_TOPIC', 'axpert/{sn}').replace('{sn}', sn)
+                send_data(d, topic)
             time.sleep(1)
 
             # QPIGS2
             pv2 = get_qpigs2_json()
-            if pv2: send_data(pv2, os.environ['MQTT_TOPIC'].replace('{sn}', sn + '_pv2'))
+            if pv2: 
+                topic_pv2 = os.environ.get('MQTT_TOPIC', 'axpert/{sn}').replace('{sn}', sn + '_pv2')
+                send_data(pv2, topic_pv2)
             time.sleep(1)
 
             # QPIRI
             d = get_settings()
-            if d: send_data(d, os.environ['MQTT_TOPIC_SETTINGS'])
-            update_time = 2
-            try:
-                update_time = int(os.environ.get("UPDATE_TIME", 2))
-            except ValueError:
-                update_time = 2
+            if d: send_data(d, os.environ.get('MQTT_TOPIC_SETTINGS', 'axpert/settings'))
+
+            update_time = int(os.environ.get("UPDATE_TIME", 2))
             time.sleep(update_time)
 
         except Exception as e:
             d = get_healthcheck('false')
-            if d: send_data(d, os.environ['MQTT_HEALTHCHECK'])
-            print("Error occurred:", e)
+            if d: send_data(d, os.environ.get('MQTT_HEALTHCHECK', 'axpert/health'))
+            print(f"[{now()}] - Error global en main loop: {e}")
             time.sleep(10)
-            
-        print('   ')
 
 if __name__ == '__main__':
     main()

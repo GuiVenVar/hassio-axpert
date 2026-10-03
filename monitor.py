@@ -49,6 +49,11 @@ pv_power_balance = {
 
 client = None
 
+# Variables de control para evitar inundación de logs (tope de 5 avisos seguidos)
+consecutive_serial_errors = 0
+MAX_LOG_ERRORS = 5
+error_logged_silenced = False
+
 
 def now():
   return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -169,7 +174,8 @@ def _write_blocks8(fd: int, frame: bytes):
 
 
 def serial_command(command: str) -> str:
-  DEVICE = os.environ.get('DEVICE', '/dev/hidraw0')
+  global consecutive_serial_errors, error_logged_silenced
+  DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
   frame = _build_frame(command)
   fd = None
   try:
@@ -177,7 +183,6 @@ def serial_command(command: str) -> str:
     time.sleep(0.02)
     _flush_input(fd)
 
-    # Orden de prueba robusto: bloques de 8 con retardo para comandos largos como QPIGS2
     writers = (
         ('blocks8', _write_blocks8),
         ('split-cr-padded', _write_split_cr_padded),
@@ -207,10 +212,29 @@ def serial_command(command: str) -> str:
     e = s.find('\r')
     payload = s[b + 1 : e] if (b != -1 and e != -1 and e > b) else s.strip()
     os.close(fd)
+
+    # Éxito: reseteamos contadores de error si veníamos de fallo
+    if consecutive_serial_errors > 0:
+      if error_logged_silenced:
+        print(f'[{now()}] - [INFO] Conexión serie restablecida con éxito.')
+      consecutive_serial_errors = 0
+      error_logged_silenced = False
+
     return payload
 
   except Exception as e:
-    print(f"[{now()}] - [serial_command] - Error ejecutando '{command}': {e}")
+    consecutive_serial_errors += 1
+    if consecutive_serial_errors <= MAX_LOG_ERRORS:
+      print(
+          f"[{now()}] - [serial_command] ({consecutive_serial_errors}/{MAX_LOG_ERRORS}) Error ejecutando '{command}' en {DEVICE}: {e}"
+      )
+      if consecutive_serial_errors == MAX_LOG_ERRORS:
+        print(
+            f'[{now()}] - [AVISO] Límite de logs de error alcanzado. Silenciando'
+            ' trazas hasta recuperación.'
+        )
+        error_logged_silenced = True
+
     if fd is not None:
       try:
         os.close(fd)
@@ -310,7 +334,6 @@ def get_qpigs2_json():
       val1 = float(safe_number(parts[1]))
       val2 = float(safe_number(parts[2]))
 
-      # Discriminación automática de V y A según magnitud
       if val0 > 50 and val1 < 50:
         pv2_v, pv2_i = val0, val1
       else:

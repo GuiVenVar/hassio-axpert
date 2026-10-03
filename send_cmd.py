@@ -8,7 +8,7 @@ import crcmod
 from binascii import unhexlify
 
 try:
-    file = open('/dev/hidraw0', 'r+')
+    file = open('/dev/ttyUSB0', 'r+')
     fd = file.fileno()
     fl = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)

@@ -1,8 +1,8 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.46",
+  "version": "0.5.47",
   "slug": "axpert_hid",
-  "description": "Monitors an axpert inverter with HID support [23/08/2026]",
+  "description": "Monitors an axpert inverter with HID support [03/10/2026]",
   "arch": [
     "amd64",
     "armv7"
@@ -20,7 +20,7 @@
     "/dev/ttyUSB0:/dev/ttyUSB0:rwm"
   ],
   "options": {
-    "mqtt_server": "192.168.1.86",
+    "mqtt_server": "192.168.1.142",
     "mqtt_user": "mqtt-voltronic",
     "mqtt_pass": "89342107dD",
     "mqtt_client_id": "axpert-ha",

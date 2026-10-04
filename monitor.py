@@ -60,14 +60,15 @@ def now():
 
 
 def connect():
-  print(f'\n\n\n[{now()}] - [monitor.py] - [ MQTT Connect ]: INIT')
+  print(f"[{now()}] - [DEBUG] Entrando en connect(). Servidor MQTT: {os.environ.get('MQTT_SERVER', 'localhost')}")
   global client
   client = mqtt.Client(client_id=os.environ.get('MQTT_CLIENT_ID', 'axpert_mon'))
   client.username_pw_set(
       os.environ.get('MQTT_USER', ''), os.environ.get('MQTT_PASS', '')
   )
+  print(f"[{now()}] - [DEBUG] Intentando conectar al broker MQTT...")
   client.connect(os.environ.get('MQTT_SERVER', 'localhost'))
-  print(f"Dispositivo configurado: {os.environ.get('DEVICE')}")
+  print(f"[{now()}] - [DEBUG] ¡Conectado a MQTT con éxito! Dispositivo: {os.environ.get('DEVICE')}")
 
 
 # ---------- Helpers ----------
@@ -390,9 +391,11 @@ def get_settings():
 
 # ---------- Bucle Principal ----------
 def main():
+  print(f"[{now()}] - [DEBUG] Arrancando script principal (main)...")
   time.sleep(randint(0, 3))
   connect()
-
+  print(f"[{now()}] - [DEBUG] Entrando en el bucle infinito...")
+  
   sn = '96342210104295'
 
   while True:

@@ -1,6 +1,6 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.47",
+  "version": "0.5.48",
   "slug": "axpert_hid",
   "description": "Monitors an axpert inverter with HID support [03/10/2026]",
   "arch": [

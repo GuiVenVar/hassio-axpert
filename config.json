@@ -1,8 +1,8 @@
 {
   "name": "Axpert Inverter (HID)",
-  "version": "0.5.48",
+  "version": "0.5.49",
   "slug": "axpert_hid",
-  "description": "Monitors an axpert inverter with HID support [03/10/2026]",
+  "description": "Monitors an axpert inverter with HID support [15/10/2026] -> Funcional <-",
   "arch": [
     "amd64",
     "armv7"

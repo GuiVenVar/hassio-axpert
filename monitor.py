@@ -1,459 +1,447 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from datetime import datetime
-import errno
+import json
+import logging
 import os
-from random import randint
-import re
-import struct
+import random
+import threading
 import time
+
 import crcmod.predefined
 import paho.mqtt.client as mqtt
+import serial
 
-battery_types = {'0': 'AGM', '1': 'Flooded', '2': 'User', '3': 'Lithium'}
-voltage_ranges = {'0': 'Appliance', '1': 'UPS'}
-output_sources = {'0': 'utility', '1': 'solar', '2': 'battery'}
+# ---------------- CONFIGURACIÓN ----------------
+DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"
+DEFAULT_BAUDRATE = 2400
+DEFAULT_POLL_INTERVAL = 2
+DEFAULT_SETTINGS_INTERVAL = 600
+DEFAULT_HEALTH_TOPIC = "axpert/healthCheck"
+SERIAL_TIMEOUT = 1.5
+MAX_SERIAL_RETRIES = 2
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("inverter-monitor")
+
+battery_types = {
+    "0": "AGM",
+    "1": "Flooded",
+    "2": "User",
+    "3": "Lithium",
+}
+voltage_ranges = {"0": "Appliance", "1": "UPS"}
+output_sources = {"0": "utility", "1": "solar", "2": "battery"}
 charger_sources = {
-    '0': 'utility first',
-    '1': 'solar first',
-    '2': 'solar + utility',
-    '3': 'solar only',
+    "0": "utility first",
+    "1": "solar first",
+    "2": "solar + utility",
+    "3": "solar only",
 }
-machine_types = {'00': 'Grid tie', '01': 'Off Grid', '10': 'Hybrid'}
-topologies = {'0': 'transformerless', '1': 'transformer'}
+machine_types = {"00": "Grid tie", "01": "Off Grid", "10": "Hybrid"}
+topologies = {"0": "transformerless", "1": "transformer"}
 output_modes = {
-    '0': 'single machine output',
-    '1': 'parallel output',
-    '2': 'Phase 1 of 3 Phase output',
-    '3': 'Phase 2 of 3 Phase output',
-    '4': 'Phase 3 of 3 Phase output',
-}
-pv_ok_conditions = {
-    '0': (
-        'As long as one unit of inverters has connect PV, parallel system will'
-        ' consider PV OK'
-    ),
-    '1': (
-        'Only All of inverters have connect PV, parallel system will consider'
-        ' PV OK'
-    ),
-}
-pv_power_balance = {
-    '0': 'PV input max current will be the max charged current',
-    '1': (
-        'PV input max power will be the sum of the max charged power and loads'
-        ' power'
-    ),
+    "0": "single machine output",
+    "1": "parallel output",
+    "2": "Phase 1 of 3 Phase output",
+    "3": "Phase 2 of 3 Phase output",
+    "4": "Phase 3 of 3 Phase output",
 }
 
-client = None
-
-# Variables de control para evitar inundación de logs (tope de 5 avisos seguidos)
-consecutive_serial_errors = 0
-MAX_LOG_ERRORS = 5
-error_logged_silenced = False
+CRC_XMODEM = crcmod.predefined.mkCrcFun("xmodem")
 
 
-def now():
-  return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-
-def connect():
-  print(f"[{now()}] - [DEBUG] Entrando en connect(). Servidor MQTT: {os.environ.get('MQTT_SERVER', 'localhost')}")
-  global client
-  client = mqtt.Client(client_id=os.environ.get('MQTT_CLIENT_ID', 'axpert_mon'))
-  client.username_pw_set(
-      os.environ.get('MQTT_USER', ''), os.environ.get('MQTT_PASS', '')
-  )
-  print(f"[{now()}] - [DEBUG] Intentando conectar al broker MQTT...")
-  client.connect(os.environ.get('MQTT_SERVER', 'localhost'))
-  print(f"[{now()}] - [DEBUG] ¡Conectado a MQTT con éxito! Dispositivo: {os.environ.get('DEVICE')}")
-
-
-# ---------- Helpers ----------
-def sanitize_id(s: str) -> str:
-  return re.sub(r'[^A-Za-z0-9_-]+', '', s or '')
+def env_int(name, default, minimum=1):
+    try:
+        value = int(os.environ.get(name, default))
+        return value if value >= minimum else default
+    except (TypeError, ValueError):
+        return default
 
 
 def safe_number(value):
-  try:
-    return int(value)
-  except ValueError:
     try:
-      return float(value)
-    except ValueError:
-      return value
+        number = float(value)
+        return int(number) if number.is_integer() else number
+    except (TypeError, ValueError):
+        return 0
 
 
-def map_with_log(table: dict, value: str, label: str) -> str:
-  if value in table:
-    return table[value]
-  print(
-      f'[get_settings] Valor inesperado en {label}: {value} (claves válidas:'
-      f' {list(table.keys())})'
-  )
-  return f'{label}_invalid({value})'
+def map_with_log(table, value, label):
+    if value in table:
+        return table[value]
+    logger.warning("Valor desconocido para %s: %r", label, value)
+    return f"{label}_unknown({value})"
+
+
+def build_crc_frame(command):
+    command_bytes = command.encode("ascii")
+    checksum = CRC_XMODEM(command_bytes)
+    return command_bytes + checksum.to_bytes(2, "big") + b"\r"
+
+
+def parse_response(raw):
+    """Extrae el payload de una respuesta Voltronic sin eliminar datos a ciegas."""
+    if not raw:
+        return ""
+    start = raw.find(b"(")
+    end = raw.find(b"\r", start + 1) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return ""
+    body = raw[start + 1:end]
+    if len(body) >= 2:
+        body = body[:-2]
+    try:
+        return body.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError:
+        return body.decode("latin1", errors="replace").strip()
+
+
+# ---------------- MQTT ----------------
+client = None
+mqtt_publish_lock = threading.Lock()
+
+
+def connect_mqtt():
+    global client
+    server = os.environ.get("MQTT_SERVER", "core-mosquitto")
+    port = env_int("MQTT_PORT", 1883)
+    client_id = os.environ.get(
+        "MQTT_CLIENT_ID", f"axpert-ha-{random.randint(1000, 9999)}"
+    )
+    username = os.environ.get("MQTT_USER", "")
+    password = os.environ.get("MQTT_PASS", "")
+
+    logger.info("Conectando a MQTT en %s:%d", server, port)
+    client = mqtt.Client(client_id=client_id)
+    if username:
+        client.username_pw_set(username, password)
+    client.connect(server, port=port, keepalive=60)
+    client.loop_start()
+    logger.info("Cliente MQTT conectado; publicador en marcha.")
 
 
 def send_data(data, topic):
-  try:
-    if client and data:
-      client.publish(topic, data, 0, True)
-      return 1
-  except Exception as e:
-    print(
-        f'[{now()}] - [monitor.py] - [ send_data ] - Error enviando a MQTT:'
-        f' {e}'
-    )
-    return 0
-  return 0
-
-
-# ---------- HID / Comunicación Serie ----------
-def _build_frame(cmd: str) -> bytes:
-  xmodem_crc_func = crcmod.predefined.mkCrcFun('xmodem')
-  cb = cmd.encode('ascii')
-  crc = xmodem_crc_func(cb)
-  crc_b = struct.pack('>H', crc)
-  return cb + crc_b + b'\x0d'
-
-
-def _read_until_cr(fd: int, timeout_s: float = 4.0) -> bytes:
-  deadline = time.time() + timeout_s
-  r = b''
-  while b'\r' not in r:
-    if time.time() > deadline:
-      raise TimeoutError('Read operation timed out')
+    if client is None or not data or not topic:
+        return False
     try:
-      c = os.read(fd, 128)
-      if c:
-        r += c
-      else:
-        time.sleep(0.01)
-    except OSError as e:
-      if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-        time.sleep(0.01)
-        continue
-      raise
-  return r
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        result = client.publish(topic, payload, qos=0, retain=True)
+        return result.rc == mqtt.MQTT_ERR_SUCCESS
+    except Exception:
+        logger.exception("Error publicando en MQTT, tópico %s", topic)
+        return False
 
 
-def _flush_input(fd: int):
-  try:
-    while True:
-      if not os.read(fd, 512):
-        break
-  except OSError:
-    pass
+# ---------------- COMUNICACIÓN SERIE ----------------
+class Inversor:
+    """
+    Consulta serie para protocolo Axpert/Voltronic.
+    Estrategia por defecto: CRC primero; para QPIGS se admite respuesta válida
+    tanto a la consulta con CRC como a la consulta ASCII simple.
+    """
+
+    def __init__(self, port, baudrate=2400, timeout=SERIAL_TIMEOUT):
+        self.port = port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.ser = None
+        self.lock = threading.Lock()
+        self._connect()
+
+    def _connect(self):
+        if self.ser and self.ser.is_open:
+            return True
+        try:
+            self.ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=self.timeout,
+                write_timeout=self.timeout,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
+            )
+            logger.info(
+                "Puerto serie abierto: %s (%d baudios, 8N1)",
+                self.port,
+                self.baudrate,
+            )
+            return True
+        except Exception:
+            logger.exception("No se pudo abrir el puerto serie %s", self.port)
+            self.ser = None
+            return False
+
+    def close(self):
+        if self.ser:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+
+    def _read_frame(self, timeout):
+        deadline = time.monotonic() + timeout
+        raw = bytearray()
+        while time.monotonic() < deadline:
+            if self.ser.in_waiting:
+                chunk = self.ser.read(self.ser.in_waiting)
+                raw.extend(chunk)
+                if b"\r" in raw:
+                    return bytes(raw[: raw.index(b"\r") + 1])
+            else:
+                time.sleep(0.01)
+        return bytes(raw)
+
+    def _query_once(self, command, with_crc):
+        if not self._connect():
+            return b""
+        frame = build_crc_frame(command) if with_crc else command.encode("ascii") + b"\r"
+        try:
+            # Descartar cualquier respuesta vieja antes de enviar la nueva orden.
+            self.ser.reset_input_buffer()
+            self.ser.write(frame)
+            self.ser.flush()
+            return self._read_frame(self.timeout + 1.0)
+        except (serial.SerialException, OSError):
+            logger.exception("Error serie enviando %s", command)
+            self.close()
+            return b""
+
+    def query(self, command):
+        """
+        Política específica basada en las pruebas:
+        - QPIGS: CRC primero; si es NAK, prueba ASCII simple.
+        - QPGS0 y QPIRI: CRC, que es el formato que se ha visto funcionar.
+        - QPIGS2: CRC primero, porque el ensayo ASCII devolvió datos que podrían
+          ser una respuesta atrasada; no se confía en respuestas sin validar.
+        - Otros comandos: CRC primero.
+        """
+        with self.lock:
+            modes = [True, False] if command in ("QPIGS", "QPIGS2") else [True]
+            last_raw = b""
+            for with_crc in modes:
+                raw = self._query_once(command, with_crc)
+                last_raw = raw
+                payload = parse_response(raw)
+                if not payload:
+                    logger.warning(
+                        "%s sin respuesta completa (%s CRC); RX=%r",
+                        command,
+                        "con" if with_crc else "sin",
+                        raw,
+                    )
+                    continue
+                if payload.startswith("NAK"):
+                    logger.warning(
+                        "%s rechazado (%s CRC): %r",
+                        command,
+                        "con" if with_crc else "sin",
+                        payload,
+                    )
+                    continue
+                logger.debug(
+                    "%s respondió (%s CRC): %s",
+                    command,
+                    "con" if with_crc else "sin",
+                    payload,
+                )
+                return payload
+            logger.warning("%s falló tras los intentos; última RX=%r", command, last_raw)
+            return ""
 
 
-def _write_oneshot(fd: int, frame: bytes):
-  os.write(fd, frame)
-
-
-def _write_split_cr_padded(fd: int, frame: bytes):
-  cmd_crc, cr = frame[:-1], frame[-1:]
-  os.write(fd, cmd_crc)
-  time.sleep(0.04)  # Pausa obligatoria para procesar reporte HID 1
-  os.write(fd, cr + b'\x00' * 7)
-
-
-def _write_blocks8(fd: int, frame: bytes):
-  CH = 8
-  off = 0
-  n = len(frame)
-  while off < n:
-    end = min(off + CH, n)
-    chunk = frame[off:end]
-    off = end
-    if len(chunk) < CH:
-      chunk = chunk + b'\x00' * (CH - len(chunk))
-    os.write(fd, chunk)
-    if off < n:
-      time.sleep(0.04)  # Pausa obligatoria entre bloques HID
-
-
-def serial_command(command: str) -> str:
-  global consecutive_serial_errors, error_logged_silenced
-  DEVICE = os.environ.get('DEVICE', '/dev/ttyUSB0')
-  frame = _build_frame(command)
-  fd = None
-  try:
-    fd = os.open(DEVICE, os.O_RDWR | os.O_NONBLOCK)
-    time.sleep(0.02)
-    _flush_input(fd)
-
-    writers = (
-        ('blocks8', _write_blocks8),
-        ('split-cr-padded', _write_split_cr_padded),
-        ('one-shot', _write_oneshot),
-    )
-
-    last_err = None
-    for writer_name, writer in writers:
-      try:
-        _flush_input(fd)
-        writer(fd, frame)
-        break
-      except Exception as e:
-        last_err = e
-        continue
-    else:
-      raise last_err if last_err else OSError('Fallaron todas las estrategias')
-
-    resp = _read_until_cr(fd, timeout_s=4.0)
-
-    try:
-      s = resp.decode('utf-8')
-    except UnicodeDecodeError:
-      s = resp.decode('iso-8859-1')
-
-    b = s.find('(')
-    e = s.find('\r')
-    payload = s[b + 1 : e] if (b != -1 and e != -1 and e > b) else s.strip()
-    os.close(fd)
-
-    # Éxito: reseteamos contadores de error si veníamos de fallo
-    if consecutive_serial_errors > 0:
-      if error_logged_silenced:
-        print(f'[{now()}] - [INFO] Conexión serie restablecida con éxito.')
-      consecutive_serial_errors = 0
-      error_logged_silenced = False
-
-    return payload
-
-  except Exception as e:
-    consecutive_serial_errors += 1
-    if consecutive_serial_errors <= MAX_LOG_ERRORS:
-      print(
-          f"[{now()}] - [serial_command] ({consecutive_serial_errors}/{MAX_LOG_ERRORS}) Error ejecutando '{command}' en {DEVICE}: {e}"
-      )
-      if consecutive_serial_errors == MAX_LOG_ERRORS:
-        print(
-            f'[{now()}] - [AVISO] Límite de logs de error alcanzado. Silenciando'
-            ' trazas hasta recuperación.'
-        )
-        error_logged_silenced = True
-
-    if fd is not None:
-      try:
-        os.close(fd)
-      except:
-        pass
-    return ''
-
-
-def get_healthcheck(value):
-  try:
-    return '{"Health": "OK"}' if value == 'true' else '{"Health": "NO OK"}'
-  except Exception as e:
-    print(f'[{now()}] - [get_healthcheck] - Error: {e}')
-    return ''
-
-
-# ---------- Lecturas y Parsers ----------
-def get_parallel_data():
-  try:
-    response = serial_command('QPGS0')
-    if not response or 'NAK' in response:
-      return ''
-    nums = response.split(' ')
-    if len(nums) < 26:
-      return ''
-
-    data = '{'
-    data += '"Gridmode":' + ('1' if nums[2] == 'L' else '0')
-    data += ',"SerialNumber": ' + str(safe_number(nums[1]))
-    data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[12]))
-    data += (
-        ',"BatteryDischargeCurrent": '
-        + str(safe_number(nums[26]))
-        if len(nums) > 26
-        else '0'
-    )
-    data += ',"TotalChargingCurrent": ' + str(safe_number(nums[15]))
-    data += ',"GridVoltage": ' + str(safe_number(nums[4]))
-    data += ',"GridFrequency": ' + str(safe_number(nums[5]))
-    data += ',"OutputVoltage": ' + str(safe_number(nums[6]))
-    data += ',"OutputFrequency": ' + str(safe_number(nums[7]))
-    data += ',"OutputAparentPower": ' + str(safe_number(nums[8]))
-    data += ',"OutputActivePower": ' + str(safe_number(nums[9]))
-    data += ',"LoadPercentage": ' + str(safe_number(nums[10]))
-    data += ',"BatteryVoltage": ' + str(safe_number(nums[11]))
-    data += ',"BatteryCapacity": ' + str(safe_number(nums[13]))
-    data += ',"PvInputVoltage": ' + str(safe_number(nums[14]))
-    data += ',"OutputMode": ' + (
-        str(safe_number(nums[20])) if len(nums) > 20 else '0'
-    )
-    data += ',"Solarmode":' + ('1' if nums[2] == 'B' else '0') + '}'
-    return data
-  except Exception as e:
-    print(f'[{now()}] - [get_parallel_data] - Error: {e}')
-    return ''
-
-
-def get_data():
-  try:
-    response = serial_command('QPIGS')
-    if not response or 'NAK' in response:
-      return ''
-    nums = response.split(' ')
+# ---------------- PARSERS ----------------
+def parse_qpigs(response):
+    nums = response.split()
     if len(nums) < 17:
-      return ''
-
-    pv_power = (
-        safe_number(nums[19])
-        if len(nums) > 19
-        else round(safe_number(nums[12]) * safe_number(nums[13]), 1)
-    )
-
-    data = '{'
-    data += '"BusVoltage":' + str(safe_number(nums[7]))
-    data += ',"InverterHeatsinkTemperature":' + str(safe_number(nums[11]))
-    data += ',"BatteryVoltageFromScc":' + str(safe_number(nums[14]))
-    data += ',"PvInputCurrent":' + str(safe_number(nums[12]))
-    data += ',"PvInputVoltage":' + str(safe_number(nums[13]))
-    data += ',"PvInputPower":' + str(pv_power)
-    data += ',"BatteryChargingCurrent": ' + str(safe_number(nums[9]))
-    data += ',"BatteryDischargeCurrent":' + str(safe_number(nums[15]))
-    data += ',"DeviceStatus":"' + (nums[16] if len(nums) > 16 else '') + '"}'
+        return {}
+    data = {
+        "BusVoltage": safe_number(nums[7]),
+        "InverterHeatsinkTemperature": safe_number(nums[11]),
+        "BatteryVoltageFromScc": safe_number(nums[14]),
+        "PvInputCurrent": safe_number(nums[12]),
+        "PvInputVoltage": safe_number(nums[13]),
+        "PvInputPower": (
+            safe_number(nums[19])
+            if len(nums) > 19
+            else round(safe_number(nums[12]) * safe_number(nums[13]), 1)
+        ),
+        "BatteryChargingCurrent": safe_number(nums[9]),
+        "BatteryDischargeCurrent": safe_number(nums[15]),
+        "DeviceStatus": nums[16],
+    }
     return data
-  except Exception as e:
-    print(f'[{now()}] - [get_data] - Error: {e}')
-    return ''
 
 
-def get_qpigs2_json():
-  try:
-    r = serial_command('QPIGS2')
-    if not r or 'NAK' in r:
-      return ''
-    parts = r.split()
-    if len(parts) >= 3:
-      val0 = float(safe_number(parts[0]))
-      val1 = float(safe_number(parts[1]))
-      val2 = float(safe_number(parts[2]))
+def parse_qpigs2(response):
+    parts = response.split()
+    if len(parts) < 3:
+        return {}
+    first = safe_number(parts[0])
+    second = safe_number(parts[1])
+    pv2_p = safe_number(parts[2])
 
-      if val0 > 50 and val1 < 50:
-        pv2_v, pv2_i = val0, val1
-      else:
-        pv2_i, pv2_v = val0, val1
+    # Algunos firmwares/consultas exponen corriente y tensión en distinto orden.
+    if first > 50 and second < 50:
+        pv2_v, pv2_i = first, second
+    else:
+        pv2_i, pv2_v = first, second
 
-      pv2_p = val2
-      if pv2_p <= 0 and (pv2_i > 0 and pv2_v > 0):
+    if pv2_p <= 0 and pv2_i > 0 and pv2_v > 0:
         pv2_p = round(pv2_v * pv2_i, 1)
-
-      return (
-          f'{{"Pv2InputCurrent": {pv2_i}, "Pv2InputVoltage": {pv2_v},'
-          f' "Pv2InputPower": {pv2_p}}}'
-      )
-    return ''
-  except Exception as e:
-    print(f'[{now()}] - [get_qpigs2] - Error: {e}')
-    return ''
+    return {
+        "Pv2InputCurrent": pv2_i,
+        "Pv2InputVoltage": pv2_v,
+        "Pv2InputPower": pv2_p,
+    }
 
 
-def get_settings():
-  try:
-    response = serial_command('QPIRI')
-    if not response or 'NAK' in response:
-      return ''
-    nums = response.split(' ')
+def parse_qpgs0(response):
+    nums = response.split()
+    if len(nums) < 26:
+        return {}
+    return {
+        "Gridmode": 1 if nums[2] == "L" else 0,
+        "SerialNumber": safe_number(nums[1]),
+        "BatteryChargingCurrent": safe_number(nums[12]),
+        "BatteryDischargeCurrent": safe_number(nums[26]) if len(nums) > 26 else 0,
+        "TotalChargingCurrent": safe_number(nums[15]),
+        "GridVoltage": safe_number(nums[4]),
+        "GridFrequency": safe_number(nums[5]),
+        "OutputVoltage": safe_number(nums[6]),
+        "OutputFrequency": safe_number(nums[7]),
+        "OutputAparentPower": safe_number(nums[8]),
+        "OutputActivePower": safe_number(nums[9]),
+        "LoadPercentage": safe_number(nums[10]),
+        "BatteryVoltage": safe_number(nums[11]),
+        "BatteryCapacity": safe_number(nums[13]),
+        "PvInputVoltage": safe_number(nums[14]),
+        "OutputMode": safe_number(nums[20]),
+        "Solarmode": 1 if nums[2] == "B" else 0,
+    }
+
+
+def parse_qpiri(response):
+    nums = response.split()
     if len(nums) < 15:
-      return ''
-
-    data = '{'
-    data += '"AcInputVoltage":' + str(safe_number(nums[0]))
-    data += ',"AcInputCurrent":' + str(safe_number(nums[1]))
-    data += ',"AcOutputVoltage":' + str(safe_number(nums[2]))
-    data += ',"AcOutputFrequency":' + str(safe_number(nums[3]))
-    data += ',"AcOutputCurrent":' + str(safe_number(nums[4]))
-    data += ',"AcOutputApparentPower":' + str(safe_number(nums[5]))
-    data += ',"AcOutputActivePower":' + str(safe_number(nums[6]))
-    data += ',"BatteryVoltage":' + str(safe_number(nums[7]))
-    data += ',"BatteryRechargeVoltage":' + str(safe_number(nums[8]))
-    data += ',"BatteryUnderVoltage":' + str(safe_number(nums[9]))
-    data += ',"BatteryBulkVoltage":' + str(safe_number(nums[10]))
-    data += ',"BatteryFloatVoltage":' + str(safe_number(nums[11]))
-    data += (
-        ',"BatteryType":"'
-        + map_with_log(battery_types, nums[12], 'BatteryType')
-        + '"'
-    )
-    data += ',"MaxAcChargingCurrent":' + str(safe_number(nums[13]))
-    data += ',"MaxChargingCurrent":' + str(safe_number(nums[14])) + '}'
-    return data
-  except Exception as e:
-    print(f'[{now()}] - [get_settings] - Error: {e}')
-    return ''
+        return {}
+    return {
+        "AcInputVoltage": safe_number(nums[0]),
+        "AcInputCurrent": safe_number(nums[1]),
+        "AcOutputVoltage": safe_number(nums[2]),
+        "AcOutputFrequency": safe_number(nums[3]),
+        "AcOutputCurrent": safe_number(nums[4]),
+        "AcOutputApparentPower": safe_number(nums[5]),
+        "AcOutputActivePower": safe_number(nums[6]),
+        "BatteryVoltage": safe_number(nums[7]),
+        "BatteryRechargeVoltage": safe_number(nums[8]),
+        "BatteryUnderVoltage": safe_number(nums[9]),
+        "BatteryBulkVoltage": safe_number(nums[10]),
+        "BatteryFloatVoltage": safe_number(nums[11]),
+        "BatteryType": map_with_log(battery_types, nums[12], "BatteryType"),
+        "MaxAcChargingCurrent": safe_number(nums[13]),
+        "MaxChargingCurrent": safe_number(nums[14]),
+    }
 
 
-# ---------- Bucle Principal ----------
+def parse_qpi(response):
+    return response if response else ""
+
+
+def parse_qid(response):
+    return response if response else ""
+
+
+# ---------------- BUCLE PRINCIPAL ----------------
 def main():
-  print(f"[{now()}] - [DEBUG] Arrancando script principal (main)...")
-  time.sleep(randint(0, 3))
-  connect()
-  print(f"[{now()}] - [DEBUG] Entrando en el bucle infinito...")
-  
-  sn = '96342210104295'
+    serial_port = os.environ.get("DEVICE", os.environ.get("SERIAL_PORT", DEFAULT_SERIAL_PORT))
+    baudrate = env_int("BAUDRATE", DEFAULT_BAUDRATE)
+    poll_interval = env_int("POLL_INTERVAL", env_int("UPDATE_TIME", DEFAULT_POLL_INTERVAL))
+    settings_interval = env_int("SETTINGS_INTERVAL", DEFAULT_SETTINGS_INTERVAL)
 
-  while True:
+    topic_base = os.environ.get("MQTT_TOPIC", "power/axpert{sn}")
+    topic_parallel = os.environ.get("MQTT_TOPIC_PARALLEL", "power/axpert")
+    topic_settings = os.environ.get("MQTT_TOPIC_SETTINGS", "power/axpert_settings")
+    topic_health = os.environ.get("MQTT_HEALTHCHECK", "axpert/healthCheck")
+
+    sn = os.environ.get("INVERTER_SERIAL", "96342210104295")
+
+    connect_mqtt()
+    inverter = Inversor(serial_port, baudrate=baudrate)
+
+    last_settings = 0.0
+    last_health_log = 0.0
+
+    logger.info(
+        "Monitor iniciado. Puerto=%s, baudios=%d, polling=%ds, settings=%ds",
+        serial_port, baudrate, poll_interval, settings_interval
+    )
+
     try:
-      # 1. HealthCheck
-      d = get_healthcheck('true')
-      if d:
-        send_data(d, os.environ.get('MQTT_HEALTHCHECK', 'power/healthcheck'))
-      time.sleep(0.3)
+        while True:
+            cycle_started = time.monotonic()
+            valid_telemetry = False
 
-      # 2. QPGS0 (Paralelo y Batería)
-      d = get_parallel_data()
-      if d:
-        send_data(
-            d, os.environ.get('MQTT_TOPIC_PARALLEL', 'power/axpert_parallel')
-        )
-      time.sleep(0.3)
+            try:
+                # QPIGS: métricas principales
+                response = inverter.query("QPIGS")
+                data = parse_qpigs(response)
+                if data:
+                    send_data(data, topic_base.replace("{sn}", sn))
+                    valid_telemetry = True
 
-      # 3. QPIGS (MPPT 1 y Métricas Generales)
-      d = get_data()
-      if d:
-        topic_sn = os.environ.get('MQTT_TOPIC', 'power/axpert{sn}').replace(
-            '{sn}', sn
-        )
-        send_data(d, topic_sn)
-      time.sleep(0.3)
+                # QPIGS2: segundo MPPT. Mantener la consulta separada.
+                response2 = inverter.query("QPIGS2")
+                data2 = parse_qpigs2(response2)
+                if data2:
+                    send_data(data2, topic_base.replace("{sn}", sn + "_pv2"))
+                    valid_telemetry = True
 
-      # 4. QPIGS2 (MPPT 2 - SEGUNDO STRING)
-      pv2 = get_qpigs2_json()
-      if pv2:
-        topic_pv2 = os.environ.get('MQTT_TOPIC', 'power/axpert{sn}').replace(
-            '{sn}', sn + '_pv2'
-        )
-        send_data(pv2, topic_pv2)
-      time.sleep(0.3)
+                # QPGS0: datos paralelos y salida.
+                response_parallel = inverter.query("QPGS0")
+                data_parallel = parse_qpgs0(response_parallel)
+                if data_parallel:
+                    send_data(data_parallel, topic_parallel)
+                    valid_telemetry = True
 
-      # 5. QPIRI (Configuración)
-      d = get_settings()
-      if d:
-        send_data(
-            d, os.environ.get('MQTT_TOPIC_SETTINGS', 'power/axpert_settings')
-        )
+                # Configuración menos frecuente.
+                now_mono = time.monotonic()
+                if now_mono - last_settings >= settings_interval:
+                    response_settings = inverter.query("QPIRI")
+                    settings = parse_qpiri(response_settings)
+                    if settings:
+                        send_data(settings, topic_settings)
+                    last_settings = now_mono
 
-      update_time = 2
-      try:
-        update_time = int(os.environ.get('UPDATE_TIME', 2))
-      except ValueError:
-        update_time = 2
+                send_data(
+                    {"Health": "OK" if valid_telemetry else "NO OK"},
+                    topic_health,
+                )
+                if not valid_telemetry and time.monotonic() - last_health_log > 30:
+                    logger.error("No se ha recibido telemetría válida en este ciclo.")
+                    last_health_log = time.monotonic()
+                
+            except Exception:
+                logger.exception("Error en el ciclo de monitorización")
+                send_data({"Health": "NO OK"}, topic_health)
 
-      time.sleep(update_time)
+            elapsed = time.monotonic() - cycle_started
+            time.sleep(max(0.1, poll_interval - elapsed))
+    finally:
+        inverter.close()
+        if client is not None:
+            client.loop_stop()
+            client.disconnect()
 
-    except Exception as e:
-      d = get_healthcheck('false')
-      if d:
-        send_data(d, os.environ.get('MQTT_HEALTHCHECK', 'power/healthcheck'))
-      print(f'[{now()}] - Excepción en bucle principal: {e}')
-      time.sleep(5)
 
-
-if __name__ == '__main__':
-  main()
+if __name__ == "__main__":
+    main()
